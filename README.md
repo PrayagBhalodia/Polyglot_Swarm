@@ -1,12 +1,9 @@
-# Polyglot Swarm — Track A: Core & Infrastructure
+# Polyglot Swarm
 
 > An automated software-translation factory. Feed it a legacy codebase, press a
 > button, and a swarm of AI agents translates it into a modern language **in
 > parallel** — then an Orchestrator tapes the translated "chapters" back together
-> into a working application.
-
-This repository is **Track A** of the Polyglot Swarm: the core application logic,
-data contracts, database access layer, configuration, and local verification.
+> into a working application, all reachable over a small HTTP API.
 
 ## The idea, in one analogy
 
@@ -19,35 +16,47 @@ Translating a 1,000-page manual from ancient Greek to English:
 Here the "translators" are Groq-powered agents; the "manager" is the
 **Orchestrator**; the "scissors" is the **Chunker**.
 
-## What Track A owns (and what it deliberately does not)
+## Design in one breath
 
-Track A is the **skeleton and the contracts**. It does *not* make the Groq API
-call itself — that is the **Brain** track. Instead Track A exposes a single seam,
-`translate_fn(unit, agent) -> TranslationResult`, that the Brain plugs into. That
-separation is what lets this whole codebase build, run, and be fully tested
-**with zero network access and no API key**.
+The whole system is built around a single seam:
+`translate_fn(unit, agent) -> TranslationResult`. Everything *except* that one
+function — chunking, dispatch, lifecycle, reassembly, persistence, and the HTTP
+API — is deterministic coordination logic that builds, runs, and is fully tested
+with **zero network access and no API key**. The actual intelligence (the Groq
+call that turns COBOL into Python) plugs into that seam; a local stub stands in
+everywhere else. There are **no runtime dependencies** — the project is
+stdlib-only (Python ≥ 3.11).
+
+## Architecture
 
 ```
 src/
-├── models/      Typed data contracts (the "Contract First" layer)
-│   ├── enums.py     Language, JobStatus, UnitStatus, AgentStatus
-│   ├── source.py    SourceFile, TranslationUnit  (a "chapter")
-│   ├── job.py       TranslationJob  (the aggregate root, derives progress)
-│   ├── agent.py     SwarmAgent, AgentAssignment
-│   └── result.py    TranslationResult  (Brain → Track A boundary)
-├── core/        Coordination logic
+├── models/       Typed data contracts (the "Contract First" layer)
+│   ├── enums.py      Language, JobStatus, UnitStatus, AgentStatus
+│   ├── source.py     SourceFile, TranslationUnit  (a "chapter")
+│   ├── job.py        TranslationJob  (the aggregate root, derives progress)
+│   ├── agent.py      SwarmAgent, AgentAssignment
+│   └── result.py     TranslationResult  (the translate_fn boundary)
+├── core/         Coordination logic
 │   ├── chunker.py       Cut source files into units (the scissors)
 │   ├── orchestrator.py  Lifecycle state machine + dispatch (the manager)
 │   ├── assembler.py     Reassemble translated chapters in order
 │   └── errors.py        Exception hierarchy
-├── config/      Layered settings (defaults → TOML → env); secrets only in env
-│   ├── settings.py
-│   └── default.toml
-└── db/          SQLite data-access layer (repositories, never touched above db/)
-    ├── schema.sql
-    ├── connection.py
-    └── repository.py    JobRepository (also the orchestrator's checkpoint hook)
+├── config/       Layered settings (defaults → TOML → env); secrets only in env
+├── db/           SQLite data-access layer (repositories, never touched above db/)
+│   └── repository.py    JobRepository (also the orchestrator's checkpoint hook)
+├── services/     Use cases over the core (TranslationService); the translate_fn seam
+├── controllers/  HTTP handlers: parse/validate a request → service call → response
+├── routes/       The Router (templated path matching) + the route table
+├── middleware/   JSON body parsing, error→JSON mapping, request logging
+└── api/          Transport (Request/Response), Application dispatch, stdlib server
 ```
+
+The layering is strict and one-directional: the HTTP layer
+(`api` → `routes`/`controllers` → `services`) depends on the core, never the
+reverse. `core` stays independent of `db` (it checkpoints through a small
+`JobPersister` protocol), so the coordination logic can be tested in complete
+isolation.
 
 ## Data flow
 
@@ -57,13 +66,35 @@ legacy files ──chunk──▶ units ──dispatch──▶ agents ──tra
    assembled target files ◀──assemble── (ordered by unit index) ◀──────┘
 ```
 
-The job advances through a **validated lifecycle** — illegal transitions raise
+A job advances through a **validated lifecycle** — illegal transitions raise
 rather than silently corrupting state:
 
 ```
 PENDING → CHUNKING → DISPATCHED → TRANSLATING → ASSEMBLING → COMPLETED
                                                             ↘ FAILED (from any active state)
 ```
+
+## HTTP API
+
+The pipeline is exposed as a stdlib-only JSON API (`http.server`, no new deps).
+The translation seam defaults to an offline stub, so the server runs fully
+working endpoints with **no network and no API key**; a real Groq client is
+injected in its place via `build_app(..., translate_fn=...)` for production.
+
+| Method & path | Purpose |
+|---|---|
+| `GET /health` | Liveness probe |
+| `POST /jobs` | Create a job (`name`, `source_language`, `target_language`, `source_files[]`) |
+| `GET /jobs` | List job summaries |
+| `GET /jobs/{id}` | Fetch one job (full aggregate) |
+| `POST /jobs/{id}/run` | Run the translate pipeline; returns the job + assembled output |
+| `GET /jobs/{id}/units` | The job's translation units |
+| `GET /jobs/{id}/results` | Stored per-unit results |
+| `GET /agents` | The configured swarm |
+
+Errors return a consistent body — `{"error": {"status": 404, "message": "..."}}` —
+with domain failures mapped to HTTP status (illegal lifecycle → `409`,
+validation → `400`, chunking/assembly → `422`).
 
 ## Quick start
 
@@ -76,9 +107,11 @@ python scripts/demo_pipeline.py
 
 # 3. Create the persistent SQLite database:
 python scripts/init_db.py
+
+# 4. Serve the HTTP API (127.0.0.1:8000; POLYGLOT_API_PORT overrides):
+python scripts/serve_api.py
 ```
 
-There are **no runtime dependencies** — Track A is stdlib-only (Python ≥ 3.11).
 Install `mypy` (`pip install -e '.[dev]'`) to enable the strict type check inside
 `verify.sh`; without it, that step is skipped and the rest still runs.
 
@@ -93,47 +126,12 @@ Precedence, lowest to highest: `src/config/default.toml` → an optional user TO
 | Target language | `POLYGLOT_TARGET_LANGUAGE` | `python` |
 | Max lines / unit | `POLYGLOT_MAX_LINES_PER_UNIT` | `200` |
 | DB path | `POLYGLOT_DB_PATH` | `polyglot_swarm.db` |
+| API host / port | `POLYGLOT_API_HOST` / `POLYGLOT_API_PORT` | `127.0.0.1` / `8000` |
 | Groq model | `POLYGLOT_GROQ_MODEL` | `llama-3.3-70b-versatile` |
-| Groq API key | `GROQ_API_KEY` | *(required by the Brain track only)* |
-
-## Track B — Services & APIs (HTTP layer)
-
-Track B exposes the core as a JSON HTTP API. Like the rest of the codebase it is
-**stdlib-only** (`http.server`) and runs with **zero network access and no API
-key**: the translation seam defaults to an offline stub, and a real Groq client
-is injected in its place via `build_app(..., translate_fn=...)` for production.
-
-```
-src/
-├── api/          Transport + wiring (Request/Response, Application, server)
-├── routes/       The Router and the declarative route table
-├── controllers/  HTTP handlers (parse → service call → response)
-├── middleware/   JSON body parsing, error→JSON mapping, request logging
-└── services/     TranslationService: use cases over Track A core
-```
-
-Run it:
-
-```bash
-python scripts/serve_api.py          # 127.0.0.1:8000 (POLYGLOT_API_PORT overrides)
-```
-
-| Method & path | Purpose |
-|---|---|
-| `GET /health` | Liveness probe |
-| `POST /jobs` | Create a job (`name`, `source_language`, `target_language`, `source_files[]`) |
-| `GET /jobs` | List job summaries |
-| `GET /jobs/{id}` | Fetch one job (full aggregate) |
-| `POST /jobs/{id}/run` | Run the translate pipeline; returns the job + assembled output |
-| `GET /jobs/{id}/units` | The job's translation units |
-| `GET /jobs/{id}/results` | Stored per-unit results |
-| `GET /agents` | The configured swarm |
-
-Errors return a consistent body — `{"error": {"status": 404, "message": "..."}}` —
-with Track A domain failures mapped to HTTP status (illegal lifecycle → `409`,
-validation → `400`, chunking/assembly → `422`).
+| Groq API key | `GROQ_API_KEY` | *(required only when a real Brain is plugged in)* |
 
 ## Commit discipline
 
-Every commit in this track passes `./scripts/verify.sh` cleanly (`exit 0`) before
-it is made. No broken, non-compiling, or failing code is ever committed.
+Every commit passes `./scripts/verify.sh` cleanly (`exit 0`) before it is made:
+byte-compilation, an optional strict `mypy` check, and the full unittest suite.
+No broken, non-compiling, or failing code is ever committed.
