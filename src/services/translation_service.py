@@ -136,6 +136,8 @@ class TranslationService:
             merge_fn=self._merge_fn,
             verify_fn=self._verify_fn,
             repair_fn=self._repair_fn,
+            max_repair_attempts=self._settings.max_repair_attempts,
+            max_concurrency=self._settings.max_concurrency,
             chunker=self._build_chunker(),
             persister=self._jobs,
         )

@@ -59,10 +59,19 @@ class Settings:
     overlap_lines: int
     database_path: str
     groq: GroqConfig
+    # Upper bound on seam calls in flight at once (translate/merge/verify).
+    # Resolved from ``agent_count`` when configured as 0 or left unset.
+    max_concurrency: int = 1
+    # Repair rounds the verification gate may spend on one failing file.
+    max_repair_attempts: int = 1
 
     def __post_init__(self) -> None:
         if self.agent_count < 1:
             raise ConfigError("swarm.agent_count must be >= 1")
+        if self.max_concurrency < 1:
+            raise ConfigError("swarm.max_concurrency must be >= 1")
+        if self.max_repair_attempts < 0:
+            raise ConfigError("verification.max_repair_attempts must be >= 0")
         if self.max_lines_per_unit < 1:
             raise ConfigError("chunking.max_lines_per_unit must be >= 1")
         if self.overlap_lines < 0 or self.overlap_lines >= self.max_lines_per_unit:
@@ -132,9 +141,19 @@ def load_settings(user_config: str | Path | None = None) -> Settings:
     chunking = data.get("chunking", {})
     groq = data.get("groq", {})
     database = data.get("database", {})
+    verification = data.get("verification", {})
 
     # Environment overrides (POLYGLOT_* namespace, plus the standard GROQ_API_KEY).
     agent_count = _env_int("POLYGLOT_AGENT_COUNT") or int(swarm.get("agent_count", 8))
+    # 0 (the shipped default) means "one worker per agent"; an explicit value
+    # caps in-flight seam calls independently of the swarm size.
+    concurrency_raw = _env_int("POLYGLOT_MAX_CONCURRENCY")
+    if concurrency_raw is None:
+        concurrency_raw = int(swarm.get("max_concurrency", 0))
+    max_concurrency = concurrency_raw if concurrency_raw > 0 else agent_count
+    repair_attempts = _env_int("POLYGLOT_MAX_REPAIR_ATTEMPTS")
+    if repair_attempts is None:
+        repair_attempts = int(verification.get("max_repair_attempts", 1))
     max_lines = _env_int("POLYGLOT_MAX_LINES_PER_UNIT") or int(
         chunking.get("max_lines_per_unit", 200)
     )
@@ -166,4 +185,6 @@ def load_settings(user_config: str | Path | None = None) -> Settings:
         overlap_lines=overlap,
         database_path=db_path,
         groq=groq_config,
+        max_concurrency=max_concurrency,
+        max_repair_attempts=repair_attempts,
     )

@@ -19,12 +19,20 @@ each level until a single piece remains. The reduction is:
 The actual reconciliation is the ``merge_fn`` seam (a second Groq call in
 production); a deterministic stub stands in for tests and demos, exactly like
 the translate seam.
+
+Every pair *at one level* is independent, so a level's merges are dispatched
+concurrently (bounded by ``max_concurrency``) and the next level only starts
+once they have all landed. Agents are picked, and results collected, in
+submission order on the calling thread, so completion order can never change
+the output: the tree is parallel but deterministic.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from functools import partial
 
 from core.assembler import (
     AssembledFile,
@@ -65,13 +73,25 @@ class Merger:
     agents:
         The swarm the merge tasks are dispatched across (round-robin over the
         online agents), so reconciliation uses the same workers as translation.
+    max_concurrency:
+        How many pairs of one tree level may be reconciled at once. ``1`` keeps
+        the tree strictly sequential.
     """
 
-    def __init__(self, merge_fn: MergeFn, agents: Sequence[SwarmAgent]) -> None:
+    def __init__(
+        self,
+        merge_fn: MergeFn,
+        agents: Sequence[SwarmAgent],
+        *,
+        max_concurrency: int = 1,
+    ) -> None:
         if not agents:
             raise MergeError("merger requires at least one agent")
+        if max_concurrency < 1:
+            raise MergeError("max_concurrency must be >= 1")
         self._merge_fn = merge_fn
         self._agents = list(agents)
+        self._max_concurrency = max_concurrency
         self._cursor = 0
 
     def merge_job(
@@ -108,36 +128,42 @@ class Merger:
 
         level = leaves
         while len(level) > 1:
-            nxt: list[tuple[str, tuple[int, int]]] = []
-            i = 0
-            while i < len(level):
-                if i + 1 < len(level):
-                    left, left_span = level[i]
-                    right, right_span = level[i + 1]
-                    task = MergeTask(
-                        source_file_id=source_file_id,
-                        target_language=target_language,
-                        left=left,
-                        right=right,
-                        left_span=left_span,
-                        right_span=right_span,
-                        depth=depth,
+            # Build the whole level's work first (on this thread): pairs in
+            # order, each with the agent the round-robin hands it, plus a
+            # possible odd piece that rides up unchanged to pair next level.
+            tasks: list[tuple[MergeTask, SwarmAgent]] = []
+            for i in range(0, len(level) - 1, 2):
+                left, left_span = level[i]
+                right, right_span = level[i + 1]
+                tasks.append(
+                    (
+                        MergeTask(
+                            source_file_id=source_file_id,
+                            target_language=target_language,
+                            left=left,
+                            right=right,
+                            left_span=left_span,
+                            right_span=right_span,
+                            depth=depth,
+                        ),
+                        self._next_agent(),
                     )
-                    result = self._merge_fn(task, self._next_agent())
-                    if not result.success:
-                        raise MergeError(
-                            f"failed to reconcile chapters {task.span} of file "
-                            f"{source_file_id!r}: {result.error}"
-                        )
-                    nxt.append((result.merged, task.span))
-                    merge_count += 1
-                    tokens += result.tokens_used
-                    i += 2
-                else:
-                    # Odd piece out: carry it up unchanged to pair next level.
-                    nxt.append(level[i])
-                    i += 1
-            level = nxt
+                )
+            carry = [level[-1]] if len(level) % 2 else []
+
+            results = self._run_level(tasks)
+
+            nxt: list[tuple[str, tuple[int, int]]] = []
+            for (task, _), result in zip(tasks, results):
+                if not result.success:
+                    raise MergeError(
+                        f"failed to reconcile chapters {task.span} of file "
+                        f"{source_file_id!r}: {result.error}"
+                    )
+                nxt.append((result.merged, task.span))
+                merge_count += 1
+                tokens += result.tokens_used
+            level = nxt + carry
             depth += 1
 
         return MergedFile(
@@ -148,6 +174,25 @@ class Merger:
             depth=depth,
             tokens_used=tokens,
         )
+
+    def _run_level(
+        self, tasks: Sequence[tuple[MergeTask, SwarmAgent]]
+    ) -> list[MergeResult]:
+        """Reconcile one level's independent pairs, returning them *in order*."""
+        if len(tasks) <= 1 or self._max_concurrency <= 1:
+            return [self._merge_fn(task, agent) for task, agent in tasks]
+
+        workers = min(self._max_concurrency, len(tasks))
+        with ThreadPoolExecutor(
+            max_workers=workers, thread_name_prefix="polyglot-merge"
+        ) as pool:
+            futures = [
+                pool.submit(partial(self._merge_fn, task, agent))
+                for task, agent in tasks
+            ]
+            # Indexing the futures list (not as_completed) keeps left-to-right
+            # order regardless of which agent finishes first.
+            return [future.result() for future in futures]
 
     def _next_agent(self) -> SwarmAgent:
         """Round-robin over agents that are participating (not OFFLINE)."""

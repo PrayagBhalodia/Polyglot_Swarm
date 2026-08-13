@@ -13,13 +13,23 @@ The actual intelligence -- the Groq call that turns COBOL into Python -- is
 injected as ``translate_fn``. Track A defines *when* and *in what order* work
 happens; the Brain track defines *how* a single unit is translated. That seam is
 what lets this whole module run, and be tested, with zero network access.
+
+**Concurrency.** A real seam call takes seconds, so the phases that contain
+independent work run their calls in a thread pool bounded by ``max_concurrency``
+(translation of units, each level of the merge tree, per-file verification).
+Threads only ever call the *seams*; every mutation of job/unit/agent state and
+every persister checkpoint happens on the main thread as futures complete, so
+the SQLite connection is never touched from a worker and output stays keyed by
+unit id -- completion order can never change the assembled result.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
-from typing import Protocol
+from functools import partial
+from typing import Protocol, TypeVar
 
 from core.assembler import AssembledFile, assemble_job
 from core.chunker import Chunker
@@ -35,6 +45,13 @@ from models.verification import VerificationResult
 
 # The seam the Brain track plugs into: translate one unit using one agent.
 TranslateFn = Callable[[TranslationUnit, SwarmAgent], TranslationResult]
+
+_T = TypeVar("_T")
+
+# Cap on how many checkpoints one translation phase writes: with many units a
+# per-unit save would rewrite the whole aggregate hundreds of times, so progress
+# is persisted on a stride instead (the phase always ends with a final save).
+_MAX_PROGRESS_CHECKPOINTS = 50
 
 
 class JobPersister(Protocol):
@@ -126,12 +143,17 @@ class Orchestrator:
         verify_fn: VerifyFn | None = None,
         repair_fn: RepairFn | None = None,
         max_repair_attempts: int = 1,
+        max_concurrency: int | None = None,
         chunker: Chunker | None = None,
         persister: JobPersister | None = None,
     ) -> None:
         if not agents:
             raise OrchestrationError("orchestrator requires at least one agent")
+        if max_concurrency is not None and max_concurrency < 1:
+            raise OrchestrationError("max_concurrency must be >= 1")
         self._agents = list(agents)
+        # One worker per agent unless the caller caps it explicitly.
+        self._max_concurrency = max_concurrency or len(self._agents)
         self._translate_fn = translate_fn
         # When a merge seam is supplied, chapters are reconciled pairwise before
         # assembly; otherwise the pipeline falls back to a naive ordered join.
@@ -166,6 +188,33 @@ class Orchestrator:
         if not pool:
             raise OrchestrationError("no online agents available for dispatch")
         return pool[cursor % len(pool)]
+
+    # --- Concurrency --------------------------------------------------------
+
+    def _as_completed(
+        self, calls: Sequence[Callable[[], _T]]
+    ) -> Iterator[tuple[int, _T]]:
+        """Run ``calls`` concurrently, yielding ``(index, value)`` as they land.
+
+        The index is the caller's own position, so results can be re-keyed
+        deterministically no matter what order the pool finishes them in. A
+        single call (or a concurrency of 1) skips the pool entirely, keeping the
+        sequential path — and its stack traces — exactly as it was.
+        """
+        if len(calls) <= 1 or self._max_concurrency <= 1:
+            for index, call in enumerate(calls):
+                yield index, call()
+            return
+
+        workers = min(self._max_concurrency, len(calls))
+        with ThreadPoolExecutor(
+            max_workers=workers, thread_name_prefix="polyglot-seam"
+        ) as pool:
+            futures: dict[Future[_T], int] = {
+                pool.submit(call): index for index, call in enumerate(calls)
+            }
+            for future in as_completed(futures):
+                yield futures[future], future.result()
 
     # --- The pipeline -------------------------------------------------------
 
@@ -219,27 +268,52 @@ class Orchestrator:
         self._checkpoint(job)
 
     def _translate(self, job: TranslationJob, report: RunReport) -> None:
+        """Translate every unit with its assigned agent, up to N at a time.
+
+        Units are independent, so this is the phase that most needs the swarm to
+        actually behave like one. Only ``translate_fn`` runs in a worker thread;
+        results are recorded on the main thread as they land, which also lets
+        ``job.progress`` advance mid-phase for anyone polling the job.
+        """
         self._transition(job, JobStatus.TRANSLATING)
         agents_by_id = {a.id: a for a in self._agents}
 
+        pairs: list[tuple[TranslationUnit, SwarmAgent]] = []
         for unit in job.units:
             agent = agents_by_id.get(unit.assigned_agent_id or "")
             if agent is None:
                 raise OrchestrationError(
                     f"unit index {unit.index} has no valid assigned agent"
                 )
+            pairs.append((unit, agent))
+
+        # Agent bookkeeping happens here, on the main thread, never in a worker:
+        # every agent that owns at least one unit is BUSY for the whole phase.
+        busy = {agent.id: agent for _, agent in pairs}
+        for agent in busy.values():
             agent.status = AgentStatus.BUSY
-            agent.current_unit_id = unit.id
+        for unit, _ in pairs:
             unit.status = UnitStatus.TRANSLATING
 
-            result = self._translate_fn(unit, agent)
-            report.results[unit.id] = result
-            unit.status = (
-                UnitStatus.TRANSLATED if result.success else UnitStatus.FAILED
-            )
-
-            agent.status = AgentStatus.IDLE
-            agent.current_unit_id = None
+        stride = max(1, len(pairs) // _MAX_PROGRESS_CHECKPOINTS)
+        try:
+            done = 0
+            calls = [
+                partial(self._translate_fn, unit, agent) for unit, agent in pairs
+            ]
+            for index, result in self._as_completed(calls):
+                unit = pairs[index][0]
+                report.results[unit.id] = result
+                unit.status = (
+                    UnitStatus.TRANSLATED if result.success else UnitStatus.FAILED
+                )
+                done += 1
+                if done % stride == 0:
+                    self._checkpoint(job)
+        finally:
+            for agent in busy.values():
+                agent.status = AgentStatus.IDLE
+                agent.current_unit_id = None
 
         self._checkpoint(job)
 
@@ -249,7 +323,9 @@ class Orchestrator:
             return
         self._ensure_no_failed_units(job)
         self._transition(job, JobStatus.MERGING)
-        merger = Merger(self._merge_fn, self._agents)
+        merger = Merger(
+            self._merge_fn, self._agents, max_concurrency=self._max_concurrency
+        )
         report.merged_files = merger.merge_job(job, report.results)
         self._checkpoint(job)
 
@@ -268,6 +344,7 @@ class Orchestrator:
             repair_fn=self._repair_fn,
             agents=self._agents,
             max_attempts=self._max_repair_attempts,
+            max_concurrency=self._max_concurrency,
         )
         verified, results = verifier.verify(job, report.merged_files)
         # Adopt the (possibly repaired) content for assembly.

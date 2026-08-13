@@ -7,6 +7,9 @@
 [swarm]
 # Number of agents the orchestrator spins up for a job.
 agent_count = 8
+# Upper bound on seam calls (translate / merge / verify) in flight at once.
+# 0 means "one worker per agent", i.e. it follows agent_count.
+max_concurrency = 0
 # Default target language when a job does not specify one.
 default_target_language = "python"
 
@@ -15,6 +18,11 @@ default_target_language = "python"
 max_lines_per_unit = 200
 # Trailing lines repeated into the next unit for join context.
 overlap_lines = 0
+
+[verification]
+# Repair rounds the verification gate may spend on one failing file before it
+# gives up and fails the job. 0 disables repair (the gate becomes pass/fail).
+max_repair_attempts = 1
 
 [groq]
 # Groq model each agent uses. The API key is read from the environment.

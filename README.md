@@ -94,6 +94,16 @@ The merge tree is order-preserving and log-depth: `n` chapters take
 different agent, so throughput scales with the swarm. An odd chapter at any
 level rides up unchanged to pair on the next, so any chapter count works.
 
+**The swarm is genuinely concurrent.** Units are translated in a thread pool
+bounded by `POLYGLOT_MAX_CONCURRENCY` (default: one worker per agent); each
+level of the merge tree dispatches all of its independent pairs at once and
+waits for them before descending; files are verified in parallel too. Only the
+seams ever run on a worker thread — agent/unit state changes and every
+persistence checkpoint happen on the main thread as futures land, so the SQLite
+connection is never shared across threads. Results are keyed by unit id and
+assembled by `index`, so **completion order can never change the output**: a
+parallel run is byte-identical to a sequential one, tokens included.
+
 Each merged file then passes a **verification gate** before assembly: a
 `verify_fn` parses it (a real `ast.parse` for Python; a structural check
 otherwise), and if it fails, a `repair_fn` agent is handed the broken file plus
@@ -173,6 +183,8 @@ Precedence, lowest to highest: `src/config/default.toml` → an optional user TO
 | Setting | Env var | Default |
 |---|---|---|
 | Agent count | `POLYGLOT_AGENT_COUNT` | `8` |
+| Max concurrent seam calls | `POLYGLOT_MAX_CONCURRENCY` | *(= agent count)* |
+| Repair budget per file | `POLYGLOT_MAX_REPAIR_ATTEMPTS` | `1` |
 | Target language | `POLYGLOT_TARGET_LANGUAGE` | `python` |
 | Max lines / unit | `POLYGLOT_MAX_LINES_PER_UNIT` | `200` |
 | DB path | `POLYGLOT_DB_PATH` | `polyglot_swarm.db` |
