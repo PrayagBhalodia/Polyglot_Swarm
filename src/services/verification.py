@@ -6,10 +6,12 @@ check. This ships a genuine, dependency-free default:
 * **Python** — the real thing: ``ast.parse`` proves the merged file is
   syntactically valid Python, and a ``SyntaxError`` becomes a precise diagnostic.
 * **Other targets** — no stdlib parser exists, so fall back to a structural
-  sanity check (non-empty, balanced brackets). A production deployment injects a
-  toolchain-backed ``verify_fn`` (e.g. ``tsc --noEmit``, ``go vet``) in its place.
+  sanity check (non-empty, balanced brackets).
 
-No network and no API key are needed for either path.
+No network and no API key are needed for either path, which is what makes this
+the safe default for tests and for a machine with no toolchains installed.
+:mod:`services.toolchain` builds on the same two primitives to reach a *real*
+parser for the other languages when one happens to be installed.
 """
 
 from __future__ import annotations
@@ -27,11 +29,11 @@ def default_verify(content: str, language: Language) -> tuple[bool, list[str]]:
     if not content.strip():
         return False, ["merged output is empty"]
     if language == Language.PYTHON:
-        return _verify_python(content)
-    return _verify_structure(content)
+        return verify_python(content)
+    return verify_structure(content)
 
 
-def _verify_python(content: str) -> tuple[bool, list[str]]:
+def verify_python(content: str) -> tuple[bool, list[str]]:
     try:
         ast.parse(content)
     except SyntaxError as exc:
@@ -40,7 +42,7 @@ def _verify_python(content: str) -> tuple[bool, list[str]]:
     return True, []
 
 
-def _verify_structure(content: str) -> tuple[bool, list[str]]:
+def verify_structure(content: str) -> tuple[bool, list[str]]:
     """A cheap language-agnostic check: brackets must balance and nest."""
     stack: list[str] = []
     for lineno, line in enumerate(content.splitlines(), start=1):

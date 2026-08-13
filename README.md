@@ -111,12 +111,29 @@ assembled by `index`, so **completion order can never change the output**: a
 parallel run is byte-identical to a sequential one, tokens included.
 
 Each merged file then passes a **verification gate** before assembly: a
-`verify_fn` parses it (a real `ast.parse` for Python; a structural check
-otherwise), and if it fails, a `repair_fn` agent is handed the broken file plus
-its diagnostics to fix — re-checked after each attempt, up to a bound. A file
-that still fails its repair budget aborts the job rather than emitting broken
-code. This is the self-correcting loop: the compiler is the oracle, repair is
-the feedback.
+`verify_fn` parses it, and if it fails, a `repair_fn` agent is handed the broken
+file plus its diagnostics to fix — re-checked after each attempt, up to
+`POLYGLOT_MAX_REPAIR_ATTEMPTS`. A file that still fails its repair budget aborts
+the job rather than emitting broken code. This is the self-correcting loop: the
+compiler is the oracle, repair is the feedback.
+
+For that loop to mean anything the oracle has to be real, so the default gate
+(`POLYGLOT_VERIFY=toolchain`) uses an actual syntax checker per target language
+whenever one is installed, and turns its diagnostics into the error list the
+repair agent sees:
+
+| Target | Checker | | Target | Checker |
+|---|---|---|---|---|
+| python | `ast.parse` (in-process) | | rust | `rustc --emit=metadata` |
+| javascript | `node --check` | | php | `php -l` |
+| typescript | `tsc --noEmit` | | ruby | `ruby -c` |
+| go | `gofmt -e` | | *anything else* | structural check |
+
+Nothing here executes the translated program — every command is a parse or type
+check — and **a missing tool is never a failure**: `shutil.which` decides, and
+an absent (or hung, or unlaunchable) tool degrades to the structural check.
+`POLYGLOT_VERIFY=basic` keeps the gate pure-stdlib and never starts a
+subprocess, which is what the test suite uses.
 
 A job advances through a **validated lifecycle** — illegal transitions raise
 rather than silently corrupting state:
@@ -219,6 +236,7 @@ Precedence, lowest to highest: `src/config/default.toml` → an optional user TO
 | Target language | `POLYGLOT_TARGET_LANGUAGE` | `python` |
 | Max lines / unit | `POLYGLOT_MAX_LINES_PER_UNIT` | `200` |
 | Chunk strategy | `POLYGLOT_CHUNK_STRATEGY` | `structural` (or `lines`) |
+| Verification gate | `POLYGLOT_VERIFY` | `toolchain` (or `basic`) |
 | DB path | `POLYGLOT_DB_PATH` | `polyglot_swarm.db` |
 | API host / port | `POLYGLOT_API_HOST` / `POLYGLOT_API_PORT` | `127.0.0.1` / `8000` |
 | Groq model | `POLYGLOT_GROQ_MODEL` | `llama-3.3-70b-versatile` |

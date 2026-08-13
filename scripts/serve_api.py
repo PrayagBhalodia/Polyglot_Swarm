@@ -3,13 +3,21 @@
 
 If ``GROQ_API_KEY`` is set, the translate / merge / repair seams are backed by a
 real Groq client; otherwise they fall back to the offline stubs, so this still
-serves fully working endpoints with **zero network access and no API key**. The
-verification gate (``ast.parse``) is local either way.
+serves fully working endpoints with **zero network access and no API key**.
+
+The verification gate is always local. By default (``POLYGLOT_VERIFY=toolchain``)
+it uses whatever real syntax checkers are installed for the target language and
+degrades to the structural check for the rest; ``POLYGLOT_VERIFY=basic`` keeps
+it pure-stdlib and never starts a subprocess.
+
+The server is single-threaded on purpose (one SQLite connection per thread);
+background job runs get their own connection via ``Database.sibling()``.
 
 Usage:
     python scripts/serve_api.py            # 127.0.0.1:8000
     GROQ_API_KEY=... python scripts/serve_api.py   # real translations
     POLYGLOT_API_PORT=9000 python scripts/serve_api.py
+    POLYGLOT_VERIFY=basic python scripts/serve_api.py   # no subprocesses
 """
 
 from __future__ import annotations
@@ -27,6 +35,7 @@ from config.dotenv import load_dotenv  # noqa: E402
 from config.settings import load_settings  # noqa: E402
 from db.connection import Database  # noqa: E402
 from services.groq_brain import maybe_groq_seams  # noqa: E402
+from services.toolchain import available_tools, verify_fn_for  # noqa: E402
 
 _logger = logging.getLogger("polyglot.api")
 
@@ -47,11 +56,18 @@ def main() -> int:
         "Groq" if translate_fn else "offline stub",
         settings.groq.model,
     )
+    verify_fn = verify_fn_for(settings)
+    _logger.info(
+        "Verification: %s (checkers found: %s)",
+        settings.verify_mode.value,
+        ", ".join(sorted(available_tools().values())) or "none — structural only",
+    )
     app = build_app(
         db,
         settings=settings,
         translate_fn=translate_fn,
         merge_fn=merge_fn,
+        verify_fn=verify_fn,
         repair_fn=repair_fn,
     )
 

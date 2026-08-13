@@ -98,6 +98,30 @@ class ChunkStrategy(str, Enum):
         )
 
 
+class VerifyMode(str, Enum):
+    """Which oracle the verification gate consults.
+
+    ``TOOLCHAIN`` shells out to a real syntax checker per target language when
+    one is installed, degrading to the structural check when it is not;
+    ``BASIC`` is the pure-stdlib gate (``ast.parse`` for Python, a structural
+    check otherwise) and never starts a subprocess.
+    """
+
+    TOOLCHAIN = "toolchain"
+    BASIC = "basic"
+
+    @classmethod
+    def from_value(cls, value: str) -> "VerifyMode":
+        normalised = value.strip().lower()
+        for member in cls:
+            if member.value == normalised:
+                return member
+        accepted = ", ".join(m.value for m in cls)
+        raise ValueError(
+            f"unknown verification mode {value!r}; expected one of: {accepted}"
+        )
+
+
 class JobStatus(str, Enum):
     """Lifecycle of a whole :class:`~models.job.TranslationJob`.
 

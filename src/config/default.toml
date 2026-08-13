@@ -25,6 +25,10 @@ overlap_lines = 0
 strategy = "structural"
 
 [verification]
+# "toolchain" runs a real syntax checker per target language when one is
+# installed (node --check, gofmt -e, rustc, php -l, ruby -c, tsc --noEmit),
+# degrading to the structural check when it is not; "basic" never shells out.
+mode = "toolchain"
 # Repair rounds the verification gate may spend on one failing file before it
 # gives up and fails the job. 0 disables repair (the gate becomes pass/fail).
 max_repair_attempts = 1

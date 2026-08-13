@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from core.errors import ConfigError
-from models.enums import ChunkStrategy, Language
+from models.enums import ChunkStrategy, Language, VerifyMode
 
 _DEFAULT_TOML = Path(__file__).with_name("default.toml")
 
@@ -66,6 +66,8 @@ class Settings:
     max_repair_attempts: int = 1
     # How unit boundaries are chosen (structure-aware by default).
     chunk_strategy: ChunkStrategy = ChunkStrategy.STRUCTURAL
+    # Which oracle the verification gate consults.
+    verify_mode: VerifyMode = VerifyMode.TOOLCHAIN
 
     def __post_init__(self) -> None:
         if self.agent_count < 1:
@@ -172,8 +174,12 @@ def load_settings(user_config: str | Path | None = None) -> Settings:
     strategy_raw = _env_str("POLYGLOT_CHUNK_STRATEGY") or str(
         chunking.get("strategy", "structural")
     )
+    verify_raw = _env_str("POLYGLOT_VERIFY") or str(
+        verification.get("mode", "toolchain")
+    )
     try:
         chunk_strategy = ChunkStrategy.from_value(strategy_raw)
+        verify_mode = VerifyMode.from_value(verify_raw)
     except ValueError as exc:
         raise ConfigError(str(exc)) from exc
 
@@ -197,4 +203,5 @@ def load_settings(user_config: str | Path | None = None) -> Settings:
         max_concurrency=max_concurrency,
         max_repair_attempts=repair_attempts,
         chunk_strategy=chunk_strategy,
+        verify_mode=verify_mode,
     )
