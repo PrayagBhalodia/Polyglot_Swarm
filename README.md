@@ -191,6 +191,10 @@ export GROQ_API_KEY=gsk_...
 python scripts/serve_api.py     # logs "Brain: Groq (model=...)"
 ```
 
+Prefer a file? Copy `.env.example` to `.env`, paste your key, and run the server
+— `serve_api.py` loads `.env` on startup via a tiny stdlib loader (no new deps).
+`.env` is gitignored; an exported shell variable still takes precedence over it.
+
 ## Commit discipline
 
 Every commit passes `./scripts/verify.sh` cleanly (`exit 0`) before it is made:

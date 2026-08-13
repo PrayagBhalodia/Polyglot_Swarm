@@ -23,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from api.app import build_app  # noqa: E402
 from api.server import serve  # noqa: E402
+from config.dotenv import load_dotenv  # noqa: E402
 from config.settings import load_settings  # noqa: E402
 from db.connection import Database  # noqa: E402
 from services.groq_brain import maybe_groq_seams  # noqa: E402
@@ -34,6 +35,7 @@ def main() -> int:
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(name)s %(message)s"
     )
+    load_dotenv()  # pick up GROQ_API_KEY from a local .env, if present
     settings = load_settings()
 
     db = Database(settings.database_path)
