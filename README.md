@@ -35,11 +35,12 @@ The whole system is built around a few symmetric seams:
 Everything *except* those functions — chunking, dispatch, lifecycle, the
 recursive merge tree, the verification gate, reassembly, persistence, and the
 HTTP API — is deterministic coordination logic that builds, runs, and is fully
-tested with **zero network access and no API key**. The actual intelligence (the
-Groq calls that translate, reconcile, and repair) plugs into those seams; local
-stubs stand in everywhere else — except `verify_fn`, whose default is a genuine
-`ast.parse`. There are **no runtime dependencies** — the project is stdlib-only
-(Python ≥ 3.11).
+tested with **zero network access and no API key**. The actual intelligence
+plugs into those seams: a real, stdlib-only **Groq client** (OpenAI-compatible
+chat completions over `urllib` — no SDK) backs `translate_fn`, `merge_fn`, and
+`repair_fn` when `GROQ_API_KEY` is set; local stubs stand in otherwise, and
+`verify_fn` is always a genuine `ast.parse`. There are **no runtime
+dependencies** — the project is stdlib-only (Python ≥ 3.11).
 
 ## Architecture
 
@@ -177,7 +178,18 @@ Precedence, lowest to highest: `src/config/default.toml` → an optional user TO
 | DB path | `POLYGLOT_DB_PATH` | `polyglot_swarm.db` |
 | API host / port | `POLYGLOT_API_HOST` / `POLYGLOT_API_PORT` | `127.0.0.1` / `8000` |
 | Groq model | `POLYGLOT_GROQ_MODEL` | `llama-3.3-70b-versatile` |
-| Groq API key | `GROQ_API_KEY` | *(required only when a real Brain is plugged in)* |
+| Groq API key | `GROQ_API_KEY` | *(unset ⇒ offline stubs; set ⇒ real Groq)* |
+
+**One key drives the whole swarm.** Agents are concurrent requests, not separate
+credentials, so a single `GROQ_API_KEY` powers any number of agents; Groq's rate
+limits are per *account*, and the client retries `429`/transient errors with
+backoff. Export the key and the translate/merge/repair seams switch from the
+offline stubs to real Groq automatically — no code change:
+
+```bash
+export GROQ_API_KEY=gsk_...
+python scripts/serve_api.py     # logs "Brain: Groq (model=...)"
+```
 
 ## Commit discipline
 
