@@ -101,17 +101,26 @@
 </div>
 
 <script>
-const SOURCE_LANGS = ["cobol", "fortran", "perl", "vb6", "delphi", "java"];
-const TARGET_LANGS = ["python", "typescript", "go", "rust"];
+// Every language can be a source or a destination.
+const LANGS = [
+  "python", "javascript", "typescript", "java", "c", "cpp", "csharp",
+  "go", "rust", "ruby", "php", "swift", "kotlin",
+  "cobol", "fortran", "perl", "vb6", "delphi",
+];
+const LABELS = {
+  cpp: "C++", csharp: "C#", php: "PHP", vb6: "VB6",
+  javascript: "JavaScript", typescript: "TypeScript",
+};
+const label = (v) => LABELS[v] || v.charAt(0).toUpperCase() + v.slice(1);
 let kind = "github";
 
 const $ = (id) => document.getElementById(id);
 function fill(sel, values, def) {
   sel.innerHTML = values.map((v) =>
-    `<option value="${v}" ${v === def ? "selected" : ""}>${v}</option>`).join("");
+    `<option value="${v}" ${v === def ? "selected" : ""}>${label(v)}</option>`).join("");
 }
-fill($("source"), SOURCE_LANGS, "cobol");
-fill($("target"), TARGET_LANGS, "python");
+fill($("source"), LANGS, "python");
+fill($("target"), LANGS, "rust");
 
 $("kind").addEventListener("click", (e) => {
   const b = e.target.closest("button"); if (!b) return;
@@ -153,6 +162,8 @@ async function post(url, body) {
 $("go").addEventListener("click", async () => {
   const location = $("location").value.trim();
   if (!location) return fail("Please enter a " + (kind === "github" ? "GitHub URL." : "folder path."));
+  if ($("source").value === $("target").value)
+    return fail("Source and destination languages must be different.");
   const btn = $("go");
   btn.disabled = true; btn.textContent = "Translating…";
   $("out").style.display = "none";

@@ -18,6 +18,16 @@ class LanguageTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             Language.from_value("brainfuck")
 
+    def test_from_value_accepts_common_aliases(self) -> None:
+        self.assertIs(Language.from_value("C++"), Language.CPP)
+        self.assertIs(Language.from_value("c#"), Language.CSHARP)
+        self.assertIs(Language.from_value("JS"), Language.JAVASCRIPT)
+        self.assertIs(Language.from_value("golang"), Language.GO)
+
+    def test_famous_languages_are_present(self) -> None:
+        for name in ("python", "javascript", "c", "cpp", "csharp", "go", "rust"):
+            self.assertIsInstance(Language.from_value(name), Language)
+
 
 class SourceFileTests(unittest.TestCase):
     def test_checksum_is_derived_when_absent(self) -> None:

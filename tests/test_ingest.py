@@ -53,6 +53,16 @@ class IngestSourceTests(unittest.TestCase):
         self.assertEqual(len(files), 2)  # the .txt is skipped
         self.assertTrue(any(p.endswith("b.cbl") for p in paths))
 
+    def test_ingests_a_modern_source_language(self) -> None:
+        with tempfile.TemporaryDirectory() as name:
+            Path(name, "main.go").write_text("package main\n", encoding="utf-8")
+            Path(name, "util.rs").write_text("fn main() {}\n", encoding="utf-8")
+            files = ingest_source(
+                kind="local", location=name, source_language=Language.GO
+            )
+        self.assertEqual(len(files), 1)  # only the .go file
+        self.assertTrue(files[0]["path"].endswith("main.go"))
+
     def test_no_matching_files_raises(self) -> None:
         with tempfile.TemporaryDirectory() as name:
             Path(name, "x.txt").write_text("nope", encoding="utf-8")

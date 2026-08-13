@@ -28,16 +28,24 @@ from models.enums import Language
 
 # File extensions that identify each source language.
 _EXTENSIONS: dict[Language, tuple[str, ...]] = {
+    Language.PYTHON: (".py", ".pyw"),
+    Language.JAVASCRIPT: (".js", ".mjs", ".cjs", ".jsx"),
+    Language.TYPESCRIPT: (".ts", ".tsx"),
+    Language.JAVA: (".java",),
+    Language.C: (".c", ".h"),
+    Language.CPP: (".cpp", ".cc", ".cxx", ".hpp", ".hh", ".hxx"),
+    Language.CSHARP: (".cs",),
+    Language.GO: (".go",),
+    Language.RUST: (".rs",),
+    Language.RUBY: (".rb",),
+    Language.PHP: (".php",),
+    Language.SWIFT: (".swift",),
+    Language.KOTLIN: (".kt", ".kts"),
     Language.COBOL: (".cob", ".cbl", ".cpy"),
-    Language.FORTRAN: (".f", ".for", ".f90", ".f95"),
+    Language.FORTRAN: (".f", ".for", ".f90", ".f95", ".f03"),
     Language.PERL: (".pl", ".pm"),
     Language.VB6: (".bas", ".cls", ".frm"),
     Language.DELPHI: (".pas", ".dpr"),
-    Language.JAVA: (".java",),
-    Language.PYTHON: (".py",),
-    Language.TYPESCRIPT: (".ts", ".tsx"),
-    Language.GO: (".go",),
-    Language.RUST: (".rs",),
 }
 
 _MAX_FILES = 500

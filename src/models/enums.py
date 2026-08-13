@@ -10,35 +10,68 @@ from enum import Enum
 
 
 class Language(str, Enum):
-    """Programming languages the swarm can read (source) or emit (target)."""
+    """Programming languages the swarm can read *or* emit.
 
-    # --- Legacy / source languages ---
+    Any member may be a source or a target — the split below is only a hint for
+    the UI's ordering, not a restriction (the sole rule is that a job's source
+    and target must differ). Common spellings like ``c++``/``c#``/``js`` are
+    accepted by :meth:`from_value` via :data:`_ALIASES`.
+    """
+
+    # --- Modern / general-purpose ---
+    PYTHON = "python"
+    JAVASCRIPT = "javascript"
+    TYPESCRIPT = "typescript"
+    JAVA = "java"
+    C = "c"
+    CPP = "cpp"
+    CSHARP = "csharp"
+    GO = "go"
+    RUST = "rust"
+    RUBY = "ruby"
+    PHP = "php"
+    SWIFT = "swift"
+    KOTLIN = "kotlin"
+
+    # --- Legacy ---
     COBOL = "cobol"
     FORTRAN = "fortran"
     PERL = "perl"
     VB6 = "vb6"
     DELPHI = "delphi"
-    JAVA = "java"
-
-    # --- Modern / target languages ---
-    PYTHON = "python"
-    TYPESCRIPT = "typescript"
-    GO = "go"
-    RUST = "rust"
 
     @classmethod
     def from_value(cls, value: str) -> "Language":
-        """Parse a language from a case-insensitive string.
+        """Parse a language from a case-insensitive string (aliases allowed).
 
         Raises ``ValueError`` with the list of accepted values so callers get an
         actionable message instead of a bare ``KeyError``.
         """
         normalised = value.strip().lower()
+        normalised = _ALIASES.get(normalised, normalised)
         for member in cls:
             if member.value == normalised:
                 return member
         accepted = ", ".join(m.value for m in cls)
         raise ValueError(f"unknown language {value!r}; expected one of: {accepted}")
+
+
+# Common alternate spellings mapped to canonical enum values.
+_ALIASES: dict[str, str] = {
+    "c++": "cpp",
+    "cplusplus": "cpp",
+    "cxx": "cpp",
+    "c#": "csharp",
+    "cs": "csharp",
+    "js": "javascript",
+    "node": "javascript",
+    "ts": "typescript",
+    "py": "python",
+    "python3": "python",
+    "rs": "rust",
+    "golang": "go",
+    "rb": "ruby",
+}
 
 
 class JobStatus(str, Enum):
