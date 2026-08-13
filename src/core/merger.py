@@ -207,9 +207,9 @@ class Merger:
         workers = min(self._max_concurrency, len(tasks))
         with ThreadPoolExecutor(
             max_workers=workers, thread_name_prefix="polyglot-merge"
-        ) as pool:
+        ) as executor:
             futures = [
-                pool.submit(partial(self._merge_fn, task, agent))
+                executor.submit(partial(self._merge_fn, task, agent))
                 for task, agent in tasks
             ]
             # Indexing the futures list (not as_completed) keeps left-to-right

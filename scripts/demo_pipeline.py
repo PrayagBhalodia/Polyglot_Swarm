@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """End-to-end Track A demo with a *stubbed* Brain.
 
-Runs the whole coordination pipeline -- chunk, dispatch across a swarm, collect,
-reassemble -- against a tiny inline COBOL snippet, persisting to an in-memory DB.
-The translation itself is faked locally so this runs with zero network/API key,
-demonstrating the ``translate_fn`` seam the Groq-powered Brain track plugs into.
+Runs the whole coordination pipeline -- agree the cross-file contract, chunk,
+dispatch across a swarm (concurrently), reconcile, verify, reassemble -- against
+a tiny inline COBOL snippet, persisting to an in-memory DB. Every seam is faked
+locally so this runs with zero network and no API key, demonstrating exactly
+where the Groq-powered Brain track plugs in.
 
 Usage:
     python scripts/demo_pipeline.py
@@ -27,6 +28,7 @@ from models.enums import Language  # noqa: E402
 from models.job import TranslationJob  # noqa: E402
 from models.result import TranslationResult  # noqa: E402
 from models.source import SourceFile, TranslationUnit  # noqa: E402
+from services.stub_contract import stub_extract_contract  # noqa: E402
 from services.stub_merger import stub_merge  # noqa: E402
 from services.verification import default_verify  # noqa: E402
 
@@ -66,7 +68,8 @@ def stub_translate(unit: TranslationUnit, agent: SwarmAgent) -> TranslationResul
 
 def main() -> int:
     settings = load_settings()
-    print(f"Loaded settings: {settings.agent_count} agents, "
+    print(f"Loaded settings: {settings.agent_count} agents "
+          f"(max {settings.max_concurrency} in flight), "
           f"target={settings.default_target_language.value}, "
           f"model={settings.groq.model}")
 
@@ -92,7 +95,11 @@ def main() -> int:
         stub_translate,
         merge_fn=stub_merge,
         verify_fn=default_verify,
-        chunker=Chunker(max_lines_per_unit=4),
+        extract_contract_fn=stub_extract_contract,
+        max_concurrency=settings.max_concurrency,
+        chunker=Chunker(
+            max_lines_per_unit=4, strategy=settings.chunk_strategy
+        ),
         persister=job_repo,
     )
 
@@ -102,6 +109,8 @@ def main() -> int:
         result_repo.save(report.results[unit.id])
 
     print(f"\nJob {job.name!r} -> {job.status.value}")
+    print(f"Contract: {report.contract_symbols} shared symbol(s) agreed "
+          f"before any chapter was translated")
     print(f"Units: {job.total_units}  |  progress: {job.progress:.0%}  |  "
           f"tokens: {report.total_tokens}")
     print(f"Merge tree: {report.merge_count} reconciliation(s), "

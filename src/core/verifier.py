@@ -150,6 +150,6 @@ class Verifier:
         workers = min(self._max_concurrency, len(calls))
         with ThreadPoolExecutor(
             max_workers=workers, thread_name_prefix="polyglot-verify"
-        ) as pool:
-            futures = [pool.submit(call) for call in calls]
+        ) as executor:
+            futures = [executor.submit(call) for call in calls]
             return [future.result() for future in futures]

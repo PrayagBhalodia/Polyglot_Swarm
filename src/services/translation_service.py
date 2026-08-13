@@ -25,7 +25,7 @@ from core.verifier import RepairFn, VerifyFn
 from db.connection import Database
 from db.repository import JobRepository, OutputRepository, ResultRepository
 from models.agent import SwarmAgent
-from models.enums import JobStatus, Language
+from models.enums import Language
 from models.job import TranslationJob
 from models.output import AssembledOutput, JobOutput, RunSummary
 from models.result import TranslationResult
