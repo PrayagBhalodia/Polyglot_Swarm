@@ -1,0 +1,29 @@
+# Default configuration for the Polyglot Swarm.
+#
+# Precedence (lowest to highest): these defaults -> a user TOML file passed to
+# load_settings() -> environment variables (POLYGLOT_* / GROQ_API_KEY).
+# Secrets (API keys) live ONLY in the environment, never in this file.
+
+[swarm]
+# Number of agents the orchestrator spins up for a job.
+agent_count = 8
+# Default target language when a job does not specify one.
+default_target_language = "python"
+
+[chunking]
+# Maximum source lines per translatable unit (one "chapter").
+max_lines_per_unit = 200
+# Trailing lines repeated into the next unit for join context.
+overlap_lines = 0
+
+[groq]
+# Groq model each agent uses. The API key is read from the environment.
+model = "llama-3.3-70b-versatile"
+base_url = "https://api.groq.com/openai/v1"
+temperature = 0.2
+max_tokens = 8192
+request_timeout_seconds = 60
+
+[database]
+# SQLite file that persists jobs, units, and results.
+path = "polyglot_swarm.db"
