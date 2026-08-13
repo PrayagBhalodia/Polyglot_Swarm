@@ -13,6 +13,7 @@ exponential backoff before surfacing as a :class:`GroqError`.
 from __future__ import annotations
 
 import json
+import re
 import time
 import urllib.error
 import urllib.request
@@ -29,6 +30,10 @@ Transport = Callable[[str, bytes, Mapping[str, str], float], tuple[int, bytes]]
 _RETRYABLE = frozenset({429, 500, 502, 503, 504})
 _MAX_RETRIES = 3
 _BACKOFF_CAP_SECONDS = 8.0
+# On a 429 we wait the window the server reports; this caps how long we will.
+_RATE_LIMIT_WAIT_CAP_SECONDS = 65.0
+# Groq embeds the retry window in the error body: "please try again in 4.88s".
+_RETRY_HINT = re.compile(r"try again in ([\d.]+)s", re.IGNORECASE)
 
 
 class GroqError(PolyglotSwarmError):
@@ -84,6 +89,8 @@ class GroqClient:
         headers = {
             "Authorization": f"Bearer {self._api_key}",
             "Content-Type": "application/json",
+            # Groq's Cloudflare edge bans urllib's default UA (error 1010 / 403).
+            "User-Agent": "polyglot-swarm/0.1",
         }
         timeout = float(self._config.request_timeout_seconds)
 
@@ -103,7 +110,10 @@ class GroqClient:
 
             last_error = _error_detail(status, body)
             if status in _RETRYABLE and attempt < _MAX_RETRIES:
-                self._sleep(_backoff(attempt))
+                # A 429 tells us (in the body) how long the rate-limit window
+                # still is; blindly backing off ~3s against a ~60s token window
+                # just burns retries, so honour the server's own hint.
+                self._sleep(_retry_delay(status, body, attempt))
                 continue
             raise GroqError(last_error)
 
@@ -112,6 +122,21 @@ class GroqClient:
 
 def _backoff(attempt: int) -> float:
     return min(0.5 * float(2**attempt), _BACKOFF_CAP_SECONDS)
+
+
+def _retry_delay(status: int, body: bytes, attempt: int) -> float:
+    """How long to wait before retrying: the server's hint when it gives one."""
+    if status == 429:
+        hint = _retry_after_seconds(body)
+        if hint is not None:
+            return min(hint + 0.5, _RATE_LIMIT_WAIT_CAP_SECONDS)
+    return _backoff(attempt)
+
+
+def _retry_after_seconds(body: bytes) -> float | None:
+    """Parse Groq's ``please try again in 4.88s`` retry hint from an error body."""
+    match = _RETRY_HINT.search(body.decode("utf-8", "replace"))
+    return float(match.group(1)) if match else None
 
 
 def _urllib_transport(
