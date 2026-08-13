@@ -96,6 +96,43 @@ Precedence, lowest to highest: `src/config/default.toml` → an optional user TO
 | Groq model | `POLYGLOT_GROQ_MODEL` | `llama-3.3-70b-versatile` |
 | Groq API key | `GROQ_API_KEY` | *(required by the Brain track only)* |
 
+## Track B — Services & APIs (HTTP layer)
+
+Track B exposes the core as a JSON HTTP API. Like the rest of the codebase it is
+**stdlib-only** (`http.server`) and runs with **zero network access and no API
+key**: the translation seam defaults to an offline stub, and a real Groq client
+is injected in its place via `build_app(..., translate_fn=...)` for production.
+
+```
+src/
+├── api/          Transport + wiring (Request/Response, Application, server)
+├── routes/       The Router and the declarative route table
+├── controllers/  HTTP handlers (parse → service call → response)
+├── middleware/   JSON body parsing, error→JSON mapping, request logging
+└── services/     TranslationService: use cases over Track A core
+```
+
+Run it:
+
+```bash
+python scripts/serve_api.py          # 127.0.0.1:8000 (POLYGLOT_API_PORT overrides)
+```
+
+| Method & path | Purpose |
+|---|---|
+| `GET /health` | Liveness probe |
+| `POST /jobs` | Create a job (`name`, `source_language`, `target_language`, `source_files[]`) |
+| `GET /jobs` | List job summaries |
+| `GET /jobs/{id}` | Fetch one job (full aggregate) |
+| `POST /jobs/{id}/run` | Run the translate pipeline; returns the job + assembled output |
+| `GET /jobs/{id}/units` | The job's translation units |
+| `GET /jobs/{id}/results` | Stored per-unit results |
+| `GET /agents` | The configured swarm |
+
+Errors return a consistent body — `{"error": {"status": 404, "message": "..."}}` —
+with Track A domain failures mapped to HTTP status (illegal lifecycle → `409`,
+validation → `400`, chunking/assembly → `422`).
+
 ## Commit discipline
 
 Every commit in this track passes `./scripts/verify.sh` cleanly (`exit 0`) before
