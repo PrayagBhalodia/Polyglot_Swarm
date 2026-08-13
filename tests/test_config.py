@@ -10,7 +10,7 @@ from unittest import mock
 
 from config.settings import load_settings
 from core.errors import ConfigError
-from models.enums import Language
+from models.enums import ChunkStrategy, Language
 
 
 class DefaultsTests(unittest.TestCase):
@@ -51,6 +51,25 @@ class OverrideTests(unittest.TestCase):
             with mock.patch.dict(os.environ, {}, clear=True):
                 settings = load_settings(cfg)
         self.assertEqual(settings.max_lines_per_unit, 50)
+
+    def test_chunk_strategy_defaults_to_structural(self) -> None:
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(
+                load_settings().chunk_strategy, ChunkStrategy.STRUCTURAL
+            )
+
+    def test_chunk_strategy_env_override(self) -> None:
+        with mock.patch.dict(
+            os.environ, {"POLYGLOT_CHUNK_STRATEGY": "lines"}, clear=True
+        ):
+            self.assertEqual(load_settings().chunk_strategy, ChunkStrategy.LINES)
+
+    def test_unknown_chunk_strategy_rejected(self) -> None:
+        with mock.patch.dict(
+            os.environ, {"POLYGLOT_CHUNK_STRATEGY": "vibes"}, clear=True
+        ):
+            with self.assertRaises(ConfigError):
+                load_settings()
 
     def test_invalid_env_int_rejected(self) -> None:
         with mock.patch.dict(

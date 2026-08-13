@@ -14,7 +14,11 @@ Translating a 1,000-page manual from ancient Greek to English:
   translators working at once, and a manager reassembles the chapters in order.
 
 Here the "translators" are Groq-powered agents; the "manager" is the
-**Orchestrator**; the "scissors" is the **Chunker**.
+**Orchestrator**; the "scissors" is the **Chunker** — and it cuts *between*
+chapters, not through them: each unit boundary is pulled back to the nearest
+top-level construct (`def`/`class`/`func`/`fn`, a COBOL `DIVISION`, a
+blank-line paragraph break) that still fits the line budget, because half a
+function is the worst thing you can hand a translator.
 
 Code isn't prose, though: adjacent chapters share types, signatures, and imports
 where they meet, so they can't just be stacked back together. Before a file is
@@ -214,6 +218,7 @@ Precedence, lowest to highest: `src/config/default.toml` → an optional user TO
 | Repair budget per file | `POLYGLOT_MAX_REPAIR_ATTEMPTS` | `1` |
 | Target language | `POLYGLOT_TARGET_LANGUAGE` | `python` |
 | Max lines / unit | `POLYGLOT_MAX_LINES_PER_UNIT` | `200` |
+| Chunk strategy | `POLYGLOT_CHUNK_STRATEGY` | `structural` (or `lines`) |
 | DB path | `POLYGLOT_DB_PATH` | `polyglot_swarm.db` |
 | API host / port | `POLYGLOT_API_HOST` / `POLYGLOT_API_PORT` | `127.0.0.1` / `8000` |
 | Groq model | `POLYGLOT_GROQ_MODEL` | `llama-3.3-70b-versatile` |

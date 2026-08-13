@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from core.errors import ConfigError
-from models.enums import Language
+from models.enums import ChunkStrategy, Language
 
 _DEFAULT_TOML = Path(__file__).with_name("default.toml")
 
@@ -64,6 +64,8 @@ class Settings:
     max_concurrency: int = 1
     # Repair rounds the verification gate may spend on one failing file.
     max_repair_attempts: int = 1
+    # How unit boundaries are chosen (structure-aware by default).
+    chunk_strategy: ChunkStrategy = ChunkStrategy.STRUCTURAL
 
     def __post_init__(self) -> None:
         if self.agent_count < 1:
@@ -167,6 +169,13 @@ def load_settings(user_config: str | Path | None = None) -> Settings:
     target_raw = _env_str("POLYGLOT_TARGET_LANGUAGE") or str(
         swarm.get("default_target_language", "python")
     )
+    strategy_raw = _env_str("POLYGLOT_CHUNK_STRATEGY") or str(
+        chunking.get("strategy", "structural")
+    )
+    try:
+        chunk_strategy = ChunkStrategy.from_value(strategy_raw)
+    except ValueError as exc:
+        raise ConfigError(str(exc)) from exc
 
     groq_config = GroqConfig(
         model=_env_str("POLYGLOT_GROQ_MODEL")
@@ -187,4 +196,5 @@ def load_settings(user_config: str | Path | None = None) -> Settings:
         groq=groq_config,
         max_concurrency=max_concurrency,
         max_repair_attempts=repair_attempts,
+        chunk_strategy=chunk_strategy,
     )

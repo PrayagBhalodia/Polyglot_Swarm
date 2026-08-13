@@ -238,4 +238,5 @@ class TranslationService:
         return Chunker(
             max_lines_per_unit=self._settings.max_lines_per_unit,
             overlap_lines=self._settings.overlap_lines,
+            strategy=self._settings.chunk_strategy,
         )

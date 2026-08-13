@@ -14,10 +14,15 @@ max_concurrency = 0
 default_target_language = "python"
 
 [chunking]
-# Maximum source lines per translatable unit (one "chapter").
+# Maximum source lines per translatable unit (one "chapter"). A hard bound
+# under either strategy.
 max_lines_per_unit = 200
 # Trailing lines repeated into the next unit for join context.
 overlap_lines = 0
+# "structural" pulls each cut back to the nearest top-level boundary that still
+# fits the budget, so functions and classes are not sliced in half; "lines"
+# splits purely by count (the original behaviour).
+strategy = "structural"
 
 [verification]
 # Repair rounds the verification gate may spend on one failing file before it

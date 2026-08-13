@@ -74,6 +74,30 @@ _ALIASES: dict[str, str] = {
 }
 
 
+class ChunkStrategy(str, Enum):
+    """How the :class:`~core.chunker.Chunker` picks unit boundaries.
+
+    ``STRUCTURAL`` prefers to cut where a top-level construct ends, so a
+    function or class lands in one unit; ``LINES`` is the original fixed-size
+    split, kept for reproducing older runs and for content with no structure to
+    find. Both honour ``max_lines_per_unit`` as a hard upper bound.
+    """
+
+    STRUCTURAL = "structural"
+    LINES = "lines"
+
+    @classmethod
+    def from_value(cls, value: str) -> "ChunkStrategy":
+        normalised = value.strip().lower()
+        for member in cls:
+            if member.value == normalised:
+                return member
+        accepted = ", ".join(m.value for m in cls)
+        raise ValueError(
+            f"unknown chunk strategy {value!r}; expected one of: {accepted}"
+        )
+
+
 class JobStatus(str, Enum):
     """Lifecycle of a whole :class:`~models.job.TranslationJob`.
 
