@@ -24,6 +24,16 @@ overlap_lines = 0
 # splits purely by count (the original behaviour).
 strategy = "structural"
 
+[ingest]
+# Optional allow-list: when set, local-folder ingestion may only read paths
+# inside this directory (symlinks resolved, ".." traversal rejected). Empty
+# means no restriction, which is the right default for a local single-user run
+# but should be set for any shared or exposed deployment.
+root = ""
+# Resource caps for one ingest, so a huge repository cannot exhaust memory.
+max_files = 500
+max_file_bytes = 1000000
+
 [verification]
 # "toolchain" runs a real syntax checker per target language when one is
 # installed (node --check, gofmt -e, rustc, php -l, ruby -c, tsc --noEmit),

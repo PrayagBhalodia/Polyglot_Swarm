@@ -25,7 +25,7 @@ from models.job import TranslationJob
 from models.output import AssembledOutput, JobOutput, RunSummary
 from models.result import TranslationResult
 from models.source import SourceFile
-from services.ingest import ingest_source
+from services.ingest import IngestPolicy, ingest_source
 from services.stub_brain import stub_translate
 from services.stub_merger import stub_merge
 from services.verification import default_verify
@@ -111,11 +111,15 @@ class TranslationService:
         """Ingest a local folder or GitHub repo, then create a PENDING job.
 
         Raises ``ValueError`` (mapped to ``400``) for unknown languages, a bad
-        location, or when no matching source files are found.
+        location, a location outside ``POLYGLOT_INGEST_ROOT``, or when no
+        matching source files are found.
         """
         source = Language.from_value(source_language)
         files = ingest_source(
-            kind=source_kind, location=location, source_language=source
+            kind=source_kind,
+            location=location,
+            source_language=source,
+            policy=IngestPolicy.from_settings(self._settings),
         )
         job_name = (name or "").strip() or _derive_name(source_kind, location)
         return self.create_job(

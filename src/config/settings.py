@@ -68,6 +68,13 @@ class Settings:
     chunk_strategy: ChunkStrategy = ChunkStrategy.STRUCTURAL
     # Which oracle the verification gate consults.
     verify_mode: VerifyMode = VerifyMode.TOOLCHAIN
+    # Optional allow-list root for local-folder ingestion. When set, a job may
+    # only be created from a path inside it; unset preserves "anywhere the
+    # process can read", which is fine for a local single-user run.
+    ingest_root: str | None = None
+    # Resource caps on one ingest, so a huge repository cannot exhaust memory.
+    max_files: int = 500
+    max_file_bytes: int = 1_000_000
 
     def __post_init__(self) -> None:
         if self.agent_count < 1:
@@ -78,6 +85,10 @@ class Settings:
             raise ConfigError("verification.max_repair_attempts must be >= 0")
         if self.max_lines_per_unit < 1:
             raise ConfigError("chunking.max_lines_per_unit must be >= 1")
+        if self.max_files < 1:
+            raise ConfigError("ingest.max_files must be >= 1")
+        if self.max_file_bytes < 1:
+            raise ConfigError("ingest.max_file_bytes must be >= 1")
         if self.overlap_lines < 0 or self.overlap_lines >= self.max_lines_per_unit:
             raise ConfigError(
                 "chunking.overlap_lines must be in [0, max_lines_per_unit)"
@@ -142,6 +153,7 @@ def load_settings(user_config: str | Path | None = None) -> Settings:
         data = _deep_merge(data, _read_toml(Path(user_config)))
 
     swarm = data.get("swarm", {})
+    ingest = data.get("ingest", {})
     chunking = data.get("chunking", {})
     groq = data.get("groq", {})
     database = data.get("database", {})
@@ -174,6 +186,11 @@ def load_settings(user_config: str | Path | None = None) -> Settings:
     strategy_raw = _env_str("POLYGLOT_CHUNK_STRATEGY") or str(
         chunking.get("strategy", "structural")
     )
+    ingest_root = _env_str("POLYGLOT_INGEST_ROOT") or ingest.get("root") or None
+    max_files = _env_int("POLYGLOT_MAX_FILES") or int(ingest.get("max_files", 500))
+    max_file_bytes = _env_int("POLYGLOT_MAX_FILE_BYTES") or int(
+        ingest.get("max_file_bytes", 1_000_000)
+    )
     verify_raw = _env_str("POLYGLOT_VERIFY") or str(
         verification.get("mode", "toolchain")
     )
@@ -204,4 +221,7 @@ def load_settings(user_config: str | Path | None = None) -> Settings:
         max_repair_attempts=repair_attempts,
         chunk_strategy=chunk_strategy,
         verify_mode=verify_mode,
+        ingest_root=str(ingest_root) if ingest_root else None,
+        max_files=max_files,
+        max_file_bytes=max_file_bytes,
     )

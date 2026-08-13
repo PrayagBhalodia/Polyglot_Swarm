@@ -237,6 +237,9 @@ Precedence, lowest to highest: `src/config/default.toml` → an optional user TO
 | Max lines / unit | `POLYGLOT_MAX_LINES_PER_UNIT` | `200` |
 | Chunk strategy | `POLYGLOT_CHUNK_STRATEGY` | `structural` (or `lines`) |
 | Verification gate | `POLYGLOT_VERIFY` | `toolchain` (or `basic`) |
+| Ingest allow-list root | `POLYGLOT_INGEST_ROOT` | *(unset ⇒ no restriction)* |
+| Max files / ingest | `POLYGLOT_MAX_FILES` | `500` |
+| Max bytes / file | `POLYGLOT_MAX_FILE_BYTES` | `1000000` |
 | DB path | `POLYGLOT_DB_PATH` | `polyglot_swarm.db` |
 | API host / port | `POLYGLOT_API_HOST` / `POLYGLOT_API_PORT` | `127.0.0.1` / `8000` |
 | Groq model | `POLYGLOT_GROQ_MODEL` | `llama-3.3-70b-versatile` |
@@ -256,6 +259,31 @@ python scripts/serve_api.py     # logs "Brain: Groq (model=...)"
 Prefer a file? Copy `.env.example` to `.env`, paste your key, and run the server
 — `serve_api.py` loads `.env` on startup via a tiny stdlib loader (no new deps).
 `.env` is gitignored; an exported shell variable still takes precedence over it.
+
+## Security notes
+
+Ingestion is the only place a request names a path the *server* then reads, so
+it is the only place that could become file disclosure if this were exposed
+beyond localhost:
+
+- **Local folders** are unrestricted by default (right for a single-user run on
+  your own machine, wrong for anything shared). Set `POLYGLOT_INGEST_ROOT` and
+  a path is fully resolved — `..` collapsed, symlinks followed — and rejected
+  with a `400` unless it lands inside that root. Files turned up by the walk are
+  re-checked the same way, so a symlink inside the tree cannot smuggle content
+  out of it either.
+- **GitHub URLs** must match a strict `https://github.com/owner/repo`
+  allow-list, are cloned `--depth 1 --no-tags` under a 120-second timeout, and
+  run **no repository hooks**: git never executes hooks from a cloned repo, and
+  `core.hooksPath` is pinned empty so local templates cannot inject any.
+  Terminal prompts are disabled, so a private URL fails fast rather than
+  blocking on a credential prompt.
+- **Resource caps** bound one ingest: `POLYGLOT_MAX_FILES` (500) files and
+  `POLYGLOT_MAX_FILE_BYTES` (1 MB) per file.
+- **Verification** shells out only to parse/type-check commands
+  (`node --check`, `gofmt -e`, `php -l`, …) — never to anything that runs the
+  translated program — and `POLYGLOT_VERIFY=basic` disables subprocesses
+  entirely.
 
 ## Commit discipline
 
