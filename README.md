@@ -124,8 +124,10 @@ via `build_app(..., translate_fn=..., merge_fn=...)` for production. The
 
 | Method & path | Purpose |
 |---|---|
+| `GET /` , `GET /ui` | The web UI (single self-contained HTML page) |
 | `GET /health` | Liveness probe |
 | `POST /jobs` | Create a job (`name`, `source_language`, `target_language`, `source_files[]`) |
+| `POST /jobs/ingest` | Create a job from a `source_kind` (`local`/`github`) + `location` |
 | `GET /jobs` | List job summaries |
 | `GET /jobs/{id}` | Fetch one job (full aggregate) |
 | `POST /jobs/{id}/run` | Run the translate pipeline; returns the job + assembled output |
@@ -149,9 +151,15 @@ python scripts/demo_pipeline.py
 # 3. Create the persistent SQLite database:
 python scripts/init_db.py
 
-# 4. Serve the HTTP API (127.0.0.1:8000; POLYGLOT_API_PORT overrides):
+# 4. Serve the HTTP API + web UI (127.0.0.1:8000; POLYGLOT_API_PORT overrides):
 python scripts/serve_api.py
 ```
+
+Then open <http://127.0.0.1:8000> for the web UI: paste a **GitHub URL** or a
+**local folder path**, pick a **destination language**, and hit *Translate*. The
+server ingests the sources (a shallow `git clone` for GitHub, a directory walk
+for a local path), runs the full pipeline, and renders the assembled output with
+its merge/verify stats. Runs offline with the stub Brain — no API key needed.
 
 Install `mypy` (`pip install -e '.[dev]'`) to enable the strict type check inside
 `verify.sh`; without it, that step is skipped and the rest still runs.

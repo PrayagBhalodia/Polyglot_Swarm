@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "api",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["scripts/serve_api.py"],
+      "port": 8000
+    }
+  ]
+}

@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Polyglot Swarm</title>
+<style>
+  :root {
+    --bg: #0f1220; --card: #191d31; --card2: #20263f; --line: #2c3355;
+    --text: #e8ebfb; --muted: #9aa3c7; --accent: #7c9cff; --accent2: #56e1c4;
+    --ok: #56e1c4; --bad: #ff7a90; --radius: 14px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; color: var(--text);
+    font: 15px/1.5 -apple-system, "Segoe UI", Roboto, Ubuntu, sans-serif;
+    background: radial-gradient(1200px 600px at 80% -10%, #24305e 0%, transparent 60%), var(--bg);
+  }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 40px 20px 80px; }
+  header h1 { margin: 0 0 4px; font-size: 30px; letter-spacing: -0.5px; }
+  header h1 span { background: linear-gradient(90deg, var(--accent), var(--accent2));
+    -webkit-background-clip: text; background-clip: text; color: transparent; }
+  header p { margin: 0 0 28px; color: var(--muted); }
+  .card { background: var(--card); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 22px; }
+  label { display: block; font-size: 13px; color: var(--muted); margin: 0 0 6px; }
+  .field { margin-bottom: 18px; }
+  .row { display: flex; gap: 16px; flex-wrap: wrap; }
+  .row .field { flex: 1; min-width: 180px; }
+  input, select {
+    width: 100%; padding: 11px 12px; color: var(--text);
+    background: var(--card2); border: 1px solid var(--line);
+    border-radius: 10px; font-size: 15px; outline: none;
+  }
+  input:focus, select:focus { border-color: var(--accent); }
+  .toggle { display: inline-flex; background: var(--card2); border: 1px solid var(--line);
+    border-radius: 10px; padding: 4px; margin-bottom: 18px; }
+  .toggle button { border: 0; background: transparent; color: var(--muted);
+    padding: 8px 16px; border-radius: 7px; cursor: pointer; font-size: 14px; }
+  .toggle button.active { background: var(--accent); color: #0f1220; font-weight: 600; }
+  .go { width: 100%; margin-top: 6px; padding: 13px; border: 0; cursor: pointer;
+    border-radius: 11px; font-size: 16px; font-weight: 600; color: #0f1220;
+    background: linear-gradient(90deg, var(--accent), var(--accent2)); }
+  .go:disabled { opacity: 0.6; cursor: progress; }
+  #out { margin-top: 26px; display: none; }
+  .stats { display: flex; flex-wrap: wrap; gap: 10px; margin: 4px 0 18px; }
+  .pill { background: var(--card2); border: 1px solid var(--line);
+    border-radius: 999px; padding: 6px 13px; font-size: 13px; color: var(--muted); }
+  .pill b { color: var(--text); }
+  .pill.ok b { color: var(--ok); } .pill.bad b { color: var(--bad); }
+  .file { border: 1px solid var(--line); border-radius: 12px; overflow: hidden;
+    margin-bottom: 14px; }
+  .file h4 { margin: 0; padding: 10px 14px; background: var(--card2);
+    font-size: 13px; font-weight: 600; color: var(--muted); }
+  pre { margin: 0; padding: 14px; overflow-x: auto; font-size: 13px;
+    font-family: "SF Mono", "JetBrains Mono", Menlo, monospace; color: #d7ddff; }
+  .error { background: rgba(255,122,144,0.12); border: 1px solid var(--bad);
+    color: #ffc2cd; padding: 12px 14px; border-radius: 10px; }
+  .hint { color: var(--muted); font-size: 12px; margin-top: 6px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1><span>Polyglot Swarm</span></h1>
+    <p>Point at a codebase, pick a target language, and let the swarm translate it.</p>
+  </header>
+
+  <div class="card">
+    <div class="toggle" id="kind">
+      <button data-kind="github" class="active">GitHub URL</button>
+      <button data-kind="local">Local folder</button>
+    </div>
+
+    <div class="field">
+      <label id="locLabel">GitHub repository URL</label>
+      <input id="location" placeholder="https://github.com/owner/repo" />
+      <div class="hint" id="locHint">A public repository — it is cloned with a shallow clone.</div>
+    </div>
+
+    <div class="row">
+      <div class="field">
+        <label>Source language</label>
+        <select id="source"></select>
+      </div>
+      <div class="field">
+        <label>Destination language</label>
+        <select id="target"></select>
+      </div>
+    </div>
+
+    <div class="field">
+      <label>Job name <span style="opacity:.6">(optional)</span></label>
+      <input id="name" placeholder="auto from the source" />
+    </div>
+
+    <button class="go" id="go">Translate ▶</button>
+  </div>
+
+  <div id="out"></div>
+</div>
+
+<script>
+const SOURCE_LANGS = ["cobol", "fortran", "perl", "vb6", "delphi", "java"];
+const TARGET_LANGS = ["python", "typescript", "go", "rust"];
+let kind = "github";
+
+const $ = (id) => document.getElementById(id);
+function fill(sel, values, def) {
+  sel.innerHTML = values.map((v) =>
+    `<option value="${v}" ${v === def ? "selected" : ""}>${v}</option>`).join("");
+}
+fill($("source"), SOURCE_LANGS, "cobol");
+fill($("target"), TARGET_LANGS, "python");
+
+$("kind").addEventListener("click", (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  kind = b.dataset.kind;
+  [...$("kind").children].forEach((c) => c.classList.toggle("active", c === b));
+  if (kind === "github") {
+    $("locLabel").textContent = "GitHub repository URL";
+    $("location").placeholder = "https://github.com/owner/repo";
+    $("locHint").textContent = "A public repository — it is cloned with a shallow clone.";
+  } else {
+    $("locLabel").textContent = "Local folder path";
+    $("location").placeholder = "/home/you/legacy-project";
+    $("locHint").textContent = "An absolute path on the machine running the server.";
+  }
+});
+
+function pill(label, value, cls = "") {
+  return `<span class="pill ${cls}"><b>${value}</b> ${label}</span>`;
+}
+function esc(s) {
+  return s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+}
+function fail(msg) {
+  $("out").style.display = "block";
+  $("out").innerHTML = `<div class="error">${esc(msg)}</div>`;
+}
+
+async function post(url, body) {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error((data.error && data.error.message) || `HTTP ${res.status}`);
+  return data;
+}
+
+$("go").addEventListener("click", async () => {
+  const location = $("location").value.trim();
+  if (!location) return fail("Please enter a " + (kind === "github" ? "GitHub URL." : "folder path."));
+  const btn = $("go");
+  btn.disabled = true; btn.textContent = "Translating…";
+  $("out").style.display = "none";
+  try {
+    const job = await post("/jobs/ingest", {
+      source_kind: kind,
+      location,
+      source_language: $("source").value,
+      target_language: $("target").value,
+      name: $("name").value.trim() || undefined,
+    });
+    const run = await post(`/jobs/${job.id}/run`, {});
+    render(run.job, run.report);
+  } catch (e) {
+    fail(e.message || String(e));
+  } finally {
+    btn.disabled = false; btn.textContent = "Translate ▶";
+  }
+});
+
+function render(job, report) {
+  const okCls = report.verified ? "ok" : "bad";
+  const stats = [
+    pill("status", report.status),
+    pill("units", job.units ? job.units.length : "—"),
+    pill("merges", report.merges),
+    pill("depth", report.merge_depth),
+    pill(report.verified ? "verified" : "unverified", report.verified ? "✓" : "✕", okCls),
+    pill("repairs", report.repairs),
+    pill("tokens", report.total_tokens),
+  ].join("");
+  const files = (report.assembled_files || []).map((f) => `
+    <div class="file">
+      <h4>${esc(f.source_path)} → ${esc(f.target_language)} · ${f.unit_count} chapters</h4>
+      <pre>${esc(f.content)}</pre>
+    </div>`).join("");
+  $("out").style.display = "block";
+  $("out").innerHTML = `<div class="stats">${stats}</div>${files}`;
+}
+</script>
+</body>
+</html>

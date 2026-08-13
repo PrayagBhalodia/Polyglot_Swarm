@@ -24,9 +24,17 @@ from models.enums import Language
 from models.job import TranslationJob
 from models.result import TranslationResult
 from models.source import SourceFile
+from services.ingest import ingest_source
 from services.stub_brain import stub_translate
 from services.stub_merger import stub_merge
 from services.verification import default_verify
+
+
+def _derive_name(kind: str, location: str) -> str:
+    """A readable default job name from the source location."""
+    tail = location.rstrip("/").split("/")[-1] or location
+    tail = tail[:-4] if tail.endswith(".git") else tail
+    return f"{tail} ({kind})"
 
 
 class TranslationService:
@@ -88,6 +96,32 @@ class TranslationService:
         )
         self._jobs.save(job)
         return job
+
+    def create_job_from_source(
+        self,
+        *,
+        name: str | None,
+        source_language: str,
+        target_language: str,
+        source_kind: str,
+        location: str,
+    ) -> TranslationJob:
+        """Ingest a local folder or GitHub repo, then create a PENDING job.
+
+        Raises ``ValueError`` (mapped to ``400``) for unknown languages, a bad
+        location, or when no matching source files are found.
+        """
+        source = Language.from_value(source_language)
+        files = ingest_source(
+            kind=source_kind, location=location, source_language=source
+        )
+        job_name = (name or "").strip() or _derive_name(source_kind, location)
+        return self.create_job(
+            name=job_name,
+            source_language=source_language,
+            target_language=target_language,
+            source_files=files,
+        )
 
     def run(self, job: TranslationJob) -> RunReport:
         """Run the full translate pipeline for ``job`` and persist results.

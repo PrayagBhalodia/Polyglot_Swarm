@@ -43,7 +43,7 @@ def _make_handler(app: Application) -> type[BaseHTTPRequestHandler]:
 
             self.send_response(response.status)
             if payload:
-                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Type", response.content_type)
             self.send_header("Content-Length", str(len(payload)))
             for key, value in response.headers.items():
                 self.send_header(key, value)

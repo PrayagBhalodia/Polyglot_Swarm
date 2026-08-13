@@ -2,7 +2,8 @@
 
 Routes served (all JSON):
 
-* ``POST /jobs``              create a job
+* ``POST /jobs``              create a job (inline source files)
+* ``POST /jobs/ingest``       create a job from a local folder or GitHub repo
 * ``GET  /jobs``             list jobs (summaries)
 * ``GET  /jobs/{id}``        fetch one job (full aggregate)
 * ``POST /jobs/{id}/run``    run the translate pipeline
@@ -40,6 +41,27 @@ class JobController:
             target_language=target_language,
             source_files=source_files,
         )
+        return Response(201, job.to_dict(), {"Location": f"/jobs/{job.id}"})
+
+    def ingest(self, request: Request) -> Response:
+        body = _require_object(request.json_body)
+        source_language = _require_str(body, "source_language")
+        target_language = _require_str(body, "target_language")
+        source_kind = _require_str(body, "source_kind")
+        location = _require_str(body, "location")
+        name = body.get("name") if isinstance(body.get("name"), str) else None
+
+        try:
+            job = self._service.create_job_from_source(
+                name=name,
+                source_language=source_language,
+                target_language=target_language,
+                source_kind=source_kind,
+                location=location,
+            )
+        except ValueError as exc:
+            # Bad language, unreadable location, or no matching files → 400.
+            raise BadRequestError(str(exc)) from exc
         return Response(201, job.to_dict(), {"Location": f"/jobs/{job.id}"})
 
     def run(self, request: Request) -> Response:

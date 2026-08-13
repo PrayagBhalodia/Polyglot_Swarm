@@ -49,22 +49,36 @@ class Request:
         return values[0] if values else default
 
 
+JSON_CONTENT_TYPE = "application/json; charset=utf-8"
+
+
 @dataclass(slots=True)
 class Response:
     """One outbound HTTP response.
 
-    ``body`` is any JSON-serialisable value (or ``None`` for an empty body); the
-    server serialises it. Extra ``headers`` are merged over the defaults.
+    ``body`` is a JSON-serialisable value that the server serialises, or — for
+    non-JSON responses such as the HTML UI — a raw ``str``/``bytes`` emitted
+    verbatim (set ``content_type`` accordingly). ``None`` means an empty body.
+    Extra ``headers`` are merged over the defaults.
     """
 
     status: int
     body: JsonValue = None
     headers: Mapping[str, str] = field(default_factory=dict)
+    content_type: str = JSON_CONTENT_TYPE
 
     def encode(self) -> bytes:
-        """Serialise the body to UTF-8 JSON bytes (empty for a ``None`` body)."""
+        """Serialise the body to UTF-8 bytes (empty for a ``None`` body).
+
+        ``str``/``bytes`` bodies are treated as already-rendered payloads;
+        anything else is JSON-encoded.
+        """
         if self.body is None:
             return b""
+        if isinstance(self.body, bytes):
+            return self.body
+        if isinstance(self.body, str):
+            return self.body.encode("utf-8")
         return json.dumps(self.body, ensure_ascii=False).encode("utf-8")
 
 
