@@ -1,0 +1,31 @@
+"""Exception hierarchy for Track A.
+
+A single root (:class:`PolyglotSwarmError`) lets callers catch everything the
+core raises without also swallowing unrelated ``ValueError``/``KeyError`` bugs.
+"""
+
+from __future__ import annotations
+
+
+class PolyglotSwarmError(Exception):
+    """Base class for all errors raised by Polyglot Swarm core code."""
+
+
+class ChunkingError(PolyglotSwarmError):
+    """Raised when a source file cannot be split into valid units."""
+
+
+class OrchestrationError(PolyglotSwarmError):
+    """Raised for illegal job-lifecycle transitions or dispatch failures."""
+
+
+class AssemblyError(PolyglotSwarmError):
+    """Raised when translated units cannot be reassembled into a file."""
+
+
+class ConfigError(PolyglotSwarmError):
+    """Raised when configuration is missing or invalid."""
+
+
+class RepositoryError(PolyglotSwarmError):
+    """Raised for data-access failures in the DB layer."""
