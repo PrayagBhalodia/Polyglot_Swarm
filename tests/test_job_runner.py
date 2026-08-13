@@ -74,10 +74,23 @@ class AsyncRunTestCase(unittest.TestCase):
         self.app: Application = build_app(self.db, settings=self.settings)
 
     def tearDown(self) -> None:
+        self._drain_runs()
         self.db.close()
         self._tmp.cleanup()
 
     # --- Helpers ------------------------------------------------------------
+
+    @staticmethod
+    def _drain_runs() -> None:
+        """Join any live runner thread.
+
+        A run marks the job terminal a moment *before* it writes its report and
+        closes its connection, so tearing the temp database out from under it
+        would be a race of the test's own making.
+        """
+        for thread in threading.enumerate():
+            if thread.name.startswith("polyglot-job-"):
+                thread.join(timeout=_TIMEOUT_SECONDS)
 
     def _create_job(self, content: str = _COBOL) -> str:
         response = self.app.dispatch(
@@ -304,6 +317,7 @@ class FailedRunTests(AsyncRunTestCase):
 
         job = self._await_terminal(job_id)
         self.assertEqual(job["status"], JobStatus.FAILED.value)
+        self._drain_runs()  # the reason is written just after the status flips
 
         response = self.app.dispatch(_request("GET", f"/jobs/{job_id}/output"))
         self.assertEqual(response.status, 200)

@@ -50,13 +50,17 @@ def main() -> int:
     db = Database(settings.database_path)
     db.init_schema()
 
-    translate_fn, merge_fn, repair_fn = maybe_groq_seams(settings)
+    translate_fn, merge_fn, repair_fn, contract_fn = maybe_groq_seams(settings)
     _logger.info(
         "Brain: %s (model=%s)",
         "Groq" if translate_fn else "offline stub",
         settings.groq.model,
     )
     verify_fn = verify_fn_for(settings)
+    _logger.info(
+        "Contract-first pass: %s",
+        "on" if settings.contract_enabled else "off (naive path)",
+    )
     _logger.info(
         "Verification: %s (checkers found: %s)",
         settings.verify_mode.value,
@@ -69,6 +73,7 @@ def main() -> int:
         merge_fn=merge_fn,
         verify_fn=verify_fn,
         repair_fn=repair_fn,
+        extract_contract_fn=contract_fn,
     )
 
     host = os.environ.get("POLYGLOT_API_HOST", "127.0.0.1")

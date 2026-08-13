@@ -27,7 +27,7 @@ from collections.abc import Callable
 from config.settings import Settings
 from core.errors import PolyglotSwarmError
 from core.merger import MergeFn
-from core.orchestrator import TranslateFn
+from core.orchestrator import ExtractContractFn, TranslateFn
 from core.verifier import RepairFn, VerifyFn
 from db.connection import Database
 from services.translation_service import TranslationService
@@ -137,6 +137,7 @@ def build_job_runner(
     merge_fn: MergeFn | None = None,
     verify_fn: VerifyFn | None = None,
     repair_fn: RepairFn | None = None,
+    extract_contract_fn: ExtractContractFn | None = None,
 ) -> JobRunner:
     """A :class:`JobRunner` whose workers mirror ``db``'s wiring on their own
     connection."""
@@ -150,6 +151,7 @@ def build_job_runner(
             merge_fn=merge_fn,
             verify_fn=verify_fn,
             repair_fn=repair_fn,
+            extract_contract_fn=extract_contract_fn,
         )
 
     return JobRunner(factory)

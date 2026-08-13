@@ -41,6 +41,7 @@ from core.assembler import (
 )
 from core.errors import MergeError
 from models.agent import SwarmAgent
+from models.contract import Contract
 from models.enums import AgentStatus, Language
 from models.job import TranslationJob
 from models.merge import MergeResult, MergeTask
@@ -95,17 +96,33 @@ class Merger:
         self._cursor = 0
 
     def merge_job(
-        self, job: TranslationJob, results: dict[str, TranslationResult]
+        self,
+        job: TranslationJob,
+        results: dict[str, TranslationResult],
+        *,
+        contract: Contract | None = None,
     ) -> list[MergedFile]:
-        """Reconcile every source file in ``job`` from its unit results."""
+        """Reconcile every source file in ``job`` from its unit results.
+
+        ``contract`` is the job-wide symbol table the chapters were translated
+        against; passing it on means a reconciler resolves a disagreement at a
+        seam by looking it up rather than by picking a side.
+        """
         merged: list[MergedFile] = []
+        paths = {f.id: f.path for f in job.source_files}
         for source_file_id, units in group_units_by_file(job).items():
             leaves = [
                 (piece_for(unit, results), (unit.index, unit.index))
                 for unit in units
             ]
             merged.append(
-                self._reduce(source_file_id, job.target_language, leaves)
+                self._reduce(
+                    source_file_id,
+                    job.target_language,
+                    leaves,
+                    source_path=paths.get(source_file_id, ""),
+                    contract=contract,
+                )
             )
         return merged
 
@@ -116,6 +133,9 @@ class Merger:
         source_file_id: str,
         target_language: Language,
         leaves: list[tuple[str, tuple[int, int]]],
+        *,
+        source_path: str = "",
+        contract: Contract | None = None,
     ) -> MergedFile:
         """Fold ``leaves`` (``(content, index_span)`` pairs) up the merge tree."""
         if not leaves:
@@ -145,6 +165,8 @@ class Merger:
                             left_span=left_span,
                             right_span=right_span,
                             depth=depth,
+                            source_path=source_path,
+                            contract=contract,
                         ),
                         self._next_agent(),
                     )

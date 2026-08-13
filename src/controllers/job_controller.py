@@ -22,6 +22,7 @@ from core.orchestrator import RunReport
 from middleware.errors import BadRequestError, ConflictError, NotFoundError
 from models.enums import JobStatus
 from models.job import TranslationJob
+from models.output import JobOutput, RunSummary
 from services.job_runner import JobRunner
 from services.translation_service import TranslationService
 
@@ -149,9 +150,15 @@ class JobController:
         job = self._load(request)
         stored = self._service.output_for(job.id)
         if stored is None:
-            raise ConflictError(
-                f"job {job.id!r} has no output yet (status={job.status.value})"
-            )
+            # A run that just failed marks the job FAILED a moment before its
+            # reason is written, so a fast poller can arrive in between. Answer
+            # from what the runner remembers rather than with a bare conflict.
+            failure = self._failure_output(job)
+            if failure is None:
+                raise ConflictError(
+                    f"job {job.id!r} has no output yet (status={job.status.value})"
+                )
+            stored = failure
         body = stored.to_dict()
         body["running"] = (
             self._runner.is_running(job.id) if self._runner is not None else False
@@ -160,6 +167,21 @@ class JobController:
         return Response(200, body)
 
     # --- Internals ----------------------------------------------------------
+
+    def _failure_output(self, job: TranslationJob) -> JobOutput | None:
+        """A summary for a job that failed before its reason reached the DB."""
+        if job.status != JobStatus.FAILED:
+            return None
+        error = self._runner.error_for(job.id) if self._runner is not None else None
+        return JobOutput(
+            summary=RunSummary(
+                job_id=job.id,
+                status=job.status,
+                succeeded=False,
+                verified=False,
+                error=error or "the run failed",
+            )
+        )
 
     def _load(self, request: Request) -> TranslationJob:
         job_id = request.path_params["id"]
@@ -234,6 +256,7 @@ def _report_dict(report: RunReport) -> dict[str, Any]:
         "merge_depth": report.merge_depth,
         "verified": report.verified,
         "repairs": report.repairs,
+        "contract_symbols": report.contract_symbols,
         "assembled_files": [
             {
                 "source_path": f.source_path,

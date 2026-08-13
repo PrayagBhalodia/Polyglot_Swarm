@@ -284,8 +284,8 @@ class OutputRepository:
                     """
                     INSERT INTO run_reports (job_id, status, succeeded,
                         total_tokens, merges, merge_tokens, merge_depth,
-                        verified, repairs, error, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        verified, repairs, contract_symbols, error, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(job_id) DO UPDATE SET
                         status=excluded.status,
                         succeeded=excluded.succeeded,
@@ -295,6 +295,7 @@ class OutputRepository:
                         merge_depth=excluded.merge_depth,
                         verified=excluded.verified,
                         repairs=excluded.repairs,
+                        contract_symbols=excluded.contract_symbols,
                         error=excluded.error,
                         created_at=excluded.created_at
                     """,
@@ -308,6 +309,7 @@ class OutputRepository:
                         summary.merge_depth,
                         1 if summary.verified else 0,
                         summary.repairs,
+                        summary.contract_symbols,
                         summary.error,
                         summary.created_at.isoformat(),
                     ),
@@ -368,6 +370,7 @@ class OutputRepository:
                 merge_depth=row["merge_depth"],
                 verified=bool(row["verified"]),
                 repairs=row["repairs"],
+                contract_symbols=row["contract_symbols"],
                 error=row["error"],
                 created_at=_parse_dt(row["created_at"]),
             ),

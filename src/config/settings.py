@@ -68,6 +68,9 @@ class Settings:
     chunk_strategy: ChunkStrategy = ChunkStrategy.STRUCTURAL
     # Which oracle the verification gate consults.
     verify_mode: VerifyMode = VerifyMode.TOOLCHAIN
+    # Run the contract-first pass before translating. Off falls back to the
+    # naive path, where every chapter is translated in isolation.
+    contract_enabled: bool = True
     # Optional allow-list root for local-folder ingestion. When set, a job may
     # only be created from a path inside it; unset preserves "anywhere the
     # process can read", which is fine for a local single-user run.
@@ -129,6 +132,23 @@ def _env_str(name: str) -> str | None:
     return value if value else None
 
 
+_TRUE = frozenset({"1", "true", "yes", "on"})
+_FALSE = frozenset({"0", "false", "no", "off"})
+
+
+def _as_bool(name: str, raw: str) -> bool:
+    """Parse a boolean environment variable, refusing anything ambiguous."""
+    normalised = raw.strip().lower()
+    if normalised in _TRUE:
+        return True
+    if normalised in _FALSE:
+        return False
+    raise ConfigError(
+        f"environment variable {name} must be one of: "
+        + ", ".join(sorted(_TRUE | _FALSE))
+    )
+
+
 def _env_int(name: str) -> int | None:
     raw = _env_str(name)
     if raw is None:
@@ -154,6 +174,7 @@ def load_settings(user_config: str | Path | None = None) -> Settings:
 
     swarm = data.get("swarm", {})
     ingest = data.get("ingest", {})
+    contract = data.get("contract", {})
     chunking = data.get("chunking", {})
     groq = data.get("groq", {})
     database = data.get("database", {})
@@ -191,6 +212,12 @@ def load_settings(user_config: str | Path | None = None) -> Settings:
     max_file_bytes = _env_int("POLYGLOT_MAX_FILE_BYTES") or int(
         ingest.get("max_file_bytes", 1_000_000)
     )
+    contract_raw = _env_str("POLYGLOT_CONTRACT")
+    contract_enabled = (
+        _as_bool("POLYGLOT_CONTRACT", contract_raw)
+        if contract_raw is not None
+        else bool(contract.get("enabled", True))
+    )
     verify_raw = _env_str("POLYGLOT_VERIFY") or str(
         verification.get("mode", "toolchain")
     )
@@ -221,6 +248,7 @@ def load_settings(user_config: str | Path | None = None) -> Settings:
         max_repair_attempts=repair_attempts,
         chunk_strategy=chunk_strategy,
         verify_mode=verify_mode,
+        contract_enabled=contract_enabled,
         ingest_root=str(ingest_root) if ingest_root else None,
         max_files=max_files,
         max_file_bytes=max_file_bytes,

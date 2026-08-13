@@ -15,7 +15,12 @@ from typing import Any
 from config.settings import Settings
 from core.chunker import Chunker
 from core.merger import MergeFn
-from core.orchestrator import Orchestrator, RunReport, TranslateFn
+from core.orchestrator import (
+    ExtractContractFn,
+    Orchestrator,
+    RunReport,
+    TranslateFn,
+)
 from core.verifier import RepairFn, VerifyFn
 from db.connection import Database
 from db.repository import JobRepository, OutputRepository, ResultRepository
@@ -27,6 +32,7 @@ from models.result import TranslationResult
 from models.source import SourceFile
 from services.ingest import IngestPolicy, ingest_source
 from services.stub_brain import stub_translate
+from services.stub_contract import stub_extract_contract
 from services.stub_merger import stub_merge
 from services.verification import default_verify
 
@@ -50,6 +56,7 @@ class TranslationService:
         merge_fn: MergeFn | None = None,
         verify_fn: VerifyFn | None = None,
         repair_fn: RepairFn | None = None,
+        extract_contract_fn: ExtractContractFn | None = None,
     ) -> None:
         self._settings = settings
         self._jobs = JobRepository(db)
@@ -64,6 +71,14 @@ class TranslationService:
         # result offline. A repair seam is opt-in (None => the gate is pass/fail).
         self._verify_fn: VerifyFn = verify_fn or default_verify
         self._repair_fn: RepairFn | None = repair_fn
+        # The contract-first pass, gated by config: on (the default) every
+        # chapter is translated against one shared symbol table; off restores
+        # the naive path where each chapter is translated in isolation.
+        self._extract_contract_fn: ExtractContractFn | None = (
+            (extract_contract_fn or stub_extract_contract)
+            if settings.contract_enabled
+            else None
+        )
 
     # --- Commands -----------------------------------------------------------
 
@@ -145,6 +160,7 @@ class TranslationService:
             merge_fn=self._merge_fn,
             verify_fn=self._verify_fn,
             repair_fn=self._repair_fn,
+            extract_contract_fn=self._extract_contract_fn,
             max_repair_attempts=self._settings.max_repair_attempts,
             max_concurrency=self._settings.max_concurrency,
             chunker=self._build_chunker(),
@@ -219,6 +235,7 @@ class TranslationService:
                 merge_depth=report.merge_depth,
                 verified=report.verified,
                 repairs=report.repairs,
+                contract_symbols=report.contract_symbols,
             ),
             [
                 AssembledOutput(

@@ -131,6 +131,7 @@ class JobStatus(str, Enum):
 
     PENDING = "pending"        # created, nothing chunked yet
     CHUNKING = "chunking"      # splitting source files into units
+    ANALYZING = "analyzing"    # extracting the shared cross-file contract
     DISPATCHED = "dispatched"  # units assigned to agents
     TRANSLATING = "translating"  # agents are working
     MERGING = "merging"        # agents reconcile adjacent chapters pairwise

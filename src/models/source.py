@@ -7,6 +7,7 @@ import uuid
 from dataclasses import dataclass, field, replace
 from typing import Any
 
+from models.contract import Contract
 from models.enums import Language, UnitStatus
 
 
@@ -74,6 +75,13 @@ class TranslationUnit:
 
     ``index`` fixes the reassembly order; the assembler relies on it being a
     contiguous 0-based sequence per source file.
+
+    The last two fields are *run-time context*, not state: the file this chapter
+    came from and the job-wide :class:`~models.contract.Contract` it must
+    translate against. They let ``translate_fn`` see more than a naked chunk
+    without changing the seam's signature, and they are derived from the job
+    rather than owned by the unit — so they are deliberately absent from
+    ``to_dict``/``from_dict`` and from the database row.
     """
 
     job_id: str
@@ -88,6 +96,8 @@ class TranslationUnit:
     assigned_agent_id: str | None = None
     id: str = field(default_factory=_new_id)
     sha256: str = ""
+    source_path: str = ""
+    contract: Contract | None = None
 
     def __post_init__(self) -> None:
         if self.index < 0:

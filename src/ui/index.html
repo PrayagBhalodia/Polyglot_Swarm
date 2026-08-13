@@ -158,8 +158,9 @@ const EXTENSIONS = {
 // The lifecycle, and where each stage sits on the bar. TRANSLATING is the long
 // one, so it spans a range that the job's own unit progress fills in.
 const STAGES = [
-  ["pending", 2], ["chunking", 8], ["dispatched", 14], ["translating", 20],
-  ["merging", 72], ["verifying", 84], ["assembling", 94], ["completed", 100],
+  ["pending", 2], ["chunking", 6], ["analyzing", 12], ["dispatched", 16],
+  ["translating", 20], ["merging", 72], ["verifying", 84],
+  ["assembling", 94], ["completed", 100],
 ];
 const AT = Object.fromEntries(STAGES);
 const POLL_MS = 600;
@@ -277,6 +278,7 @@ function render(output) {
   const stats = [
     pill("status", output.status),
     pill("files", output.file_count),
+    pill("contract symbols", output.contract_symbols ?? 0),
     pill("merges", output.merges),
     pill("depth", output.merge_depth),
     pill(output.verified ? "verified" : "unverified",

@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
+from models.contract import Contract
 from models.enums import Language
 
 
@@ -34,6 +35,11 @@ class MergeTask:
     the inclusive unit-index ranges each side already covers, and ``depth`` is
     the level in the merge tree (0 = merging two original leaf chapters), both
     useful context for a real Brain prompt.
+
+    ``source_path`` and ``contract`` carry the same job-wide context the
+    translate seam receives: a reconciler that knows the agreed name for a
+    symbol can unify a seam *towards the contract* instead of picking one
+    side's invention.
     """
 
     source_file_id: str
@@ -43,6 +49,8 @@ class MergeTask:
     left_span: tuple[int, int]
     right_span: tuple[int, int]
     depth: int = 0
+    source_path: str = ""
+    contract: Contract | None = None
 
     @property
     def span(self) -> tuple[int, int]:

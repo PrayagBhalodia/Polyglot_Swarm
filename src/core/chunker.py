@@ -148,6 +148,9 @@ class Chunker:
                     target_language=target_language,
                     start_line=cursor + 1,
                     end_line=end,
+                    # Run-time context so a seam can say *which file* this
+                    # chapter came from, not just what it contains.
+                    source_path=source_file.path,
                 )
             )
             index += 1

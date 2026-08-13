@@ -57,6 +57,8 @@ class RunSummary:
     merge_depth: int = 0
     verified: bool = True
     repairs: int = 0
+    # Size of the shared contract the chapters were translated against.
+    contract_symbols: int = 0
     error: str | None = None
     created_at: datetime = field(default_factory=_now)
 
@@ -71,6 +73,7 @@ class RunSummary:
             "merge_depth": self.merge_depth,
             "verified": self.verified,
             "repairs": self.repairs,
+            "contract_symbols": self.contract_symbols,
             "error": self.error,
             "created_at": self.created_at.isoformat(),
         }

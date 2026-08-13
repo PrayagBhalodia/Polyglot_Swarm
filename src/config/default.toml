@@ -34,6 +34,13 @@ root = ""
 max_files = 500
 max_file_bytes = 1000000
 
+[contract]
+# Run the contract-first pass: one read of the whole codebase, before anything
+# is translated, that fixes the target name and signature of every public
+# symbol so independently-translated chapters cannot diverge on them. Turning
+# this off falls back to translating each chapter in isolation.
+enabled = true
+
 [verification]
 # "toolchain" runs a real syntax checker per target language when one is
 # installed (node --check, gofmt -e, rustc, php -l, ruby -c, tsc --noEmit),

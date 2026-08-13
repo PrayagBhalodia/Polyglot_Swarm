@@ -21,16 +21,28 @@ blank-line paragraph break) that still fits the line budget, because half a
 function is the worst thing you can hand a translator.
 
 Code isn't prose, though: adjacent chapters share types, signatures, and imports
-where they meet, so they can't just be stacked back together. Before a file is
-emitted, a second kind of agent — a **reconciler** — merges neighbouring
-chapters *pairwise*, folding them up a binary tree until one coherent file
-remains. Think of an editor passing over each seam between two translated
-chapters, then over the seams between those, and so on.
+where they meet, so they can't just be stacked back together. Two things keep
+them coherent.
+
+**Before** anything is translated, one pass reads the whole codebase and agrees
+a **contract**: the public symbols, the name each will carry in the target
+language, and its signature. Every agent then translates *against that table*,
+so chapter 3 and chapter 7 — and file A and file B — cannot each invent their
+own name for the same function. This matters because the merge tree only ever
+sees one file: cross-file divergence is something it structurally cannot fix,
+so the only winning move is not to create it.
+
+**After** translation, a second kind of agent — a **reconciler** — merges
+neighbouring chapters *pairwise*, folding them up a binary tree until one
+coherent file remains. Think of an editor passing over each seam between two
+translated chapters, then over the seams between those, and so on.
 
 ## Design in one breath
 
 The whole system is built around a few symmetric seams:
 
+- `extract_contract_fn(files, source, target) -> Contract` — agree the shared
+  symbol table before any translation starts.
 - `translate_fn(unit, agent) -> TranslationResult` — translate one chapter.
 - `merge_fn(task, agent) -> MergeResult` — reconcile two adjacent chapters.
 - `verify_fn(content, language) -> (ok, errors)` — does the merged file parse?
@@ -41,9 +53,9 @@ recursive merge tree, the verification gate, reassembly, persistence, and the
 HTTP API — is deterministic coordination logic that builds, runs, and is fully
 tested with **zero network access and no API key**. The actual intelligence
 plugs into those seams: a real, stdlib-only **Groq client** (OpenAI-compatible
-chat completions over `urllib` — no SDK) backs `translate_fn`, `merge_fn`, and
-`repair_fn` when `GROQ_API_KEY` is set; local stubs stand in otherwise, and
-`verify_fn` is always a genuine `ast.parse`. There are **no runtime
+chat completions over `urllib` — no SDK) backs the translate, merge, repair, and
+contract seams when `GROQ_API_KEY` is set; deterministic local stubs stand in
+otherwise, and `verify_fn` is never an LLM at all. There are **no runtime
 dependencies** — the project is stdlib-only (Python ≥ 3.11).
 
 ## Architecture
@@ -56,10 +68,12 @@ src/
 │   ├── job.py        TranslationJob  (the aggregate root, derives progress)
 │   ├── agent.py      SwarmAgent, AgentAssignment
 │   ├── result.py     TranslationResult  (the translate_fn boundary)
-│   └── merge.py      MergeTask, MergeResult  (the merge_fn boundary)
+│   ├── merge.py      MergeTask, MergeResult  (the merge_fn boundary)
+│   ├── contract.py   Contract, ContractSymbol  (the shared symbol table)
+│   └── output.py     RunSummary, AssembledOutput  (durable run results)
 ├── core/         Coordination logic
-│   ├── chunker.py       Cut source files into units (the scissors)
-│   ├── orchestrator.py  Lifecycle state machine + dispatch (the manager)
+│   ├── chunker.py       Cut source files into units (structure-aware scissors)
+│   ├── orchestrator.py  Lifecycle state machine, contract pass, concurrency
 │   ├── merger.py        Reconcile adjacent chapters pairwise (the merge tree)
 │   ├── verifier.py      Gate merged output on parse-soundness, repair in a loop
 │   ├── assembler.py     Reassemble chapters in order (naive-join fallback)
@@ -85,15 +99,31 @@ isolation.
 ## Data flow
 
 ```
-legacy files ──chunk──▶ units ──dispatch──▶ agents ──translate_fn──▶ results
-                                                                        │
-                                        ┌──── merge_fn (pairwise, ◀─────┘
-                                        │      recursive up a tree)
+legacy files ──chunk──▶ units ─────────────────────────────┐
+      │                                                    │
+      └──extract_contract_fn──▶ Contract ──shared context──┤
+         (one pass, before                                 ▼
+          anything is translated)          dispatch ──▶ agents
+                                                           │ translate_fn
+                                                           ▼
+                                        ┌──── merge_fn ◀─── results
+                                        │    (pairwise, recursive up a tree;
+                                        │     the contract rides along)
                                         ▼
                              verify_fn ──ok?──▶ assemble ──▶ target files
                                  ▲   │
                                  └───┘ repair_fn (fix + re-check, bounded)
 ```
+
+The contract is the answer to the pipeline's hardest problem. Chapters are
+translated independently — that is what makes the swarm fast — and independent
+translators diverge: `calculateNetPay` here, `calc_net_pay` there, a class file
+B imports that file A never emitted under that name. Fixing that afterwards is
+the hard direction, and the merge tree cannot even see it, because it works one
+file at a time. So the contract-first pass fixes the vocabulary *before* any
+chapter is translated, and every translate and merge prompt carries it (own-file
+symbols first, then the rest of the codebase). `POLYGLOT_CONTRACT=off` restores
+the naive, contract-free path.
 
 The merge tree is order-preserving and log-depth: `n` chapters take
 `ceil(log2(n))` levels, and every pair at a level can be reconciled by a
@@ -139,13 +169,17 @@ A job advances through a **validated lifecycle** — illegal transitions raise
 rather than silently corrupting state:
 
 ```
-PENDING → CHUNKING → DISPATCHED → TRANSLATING → MERGING → VERIFYING → ASSEMBLING → COMPLETED
-                                                                    ↘ FAILED (from any active state)
+PENDING → CHUNKING → ANALYZING → DISPATCHED → TRANSLATING → MERGING → VERIFYING → ASSEMBLING → COMPLETED
+                                                                        ↘ FAILED (from any active state)
 ```
 
-(With the merge seam disabled, `TRANSLATING` goes straight to `ASSEMBLING` and
-chapters are joined naively; with merge on but no verify seam, `VERIFYING` is
-skipped. Both are fallbacks the assembler still serves.)
+(Each optional seam removes its own stage: without a contract seam `CHUNKING`
+goes straight to `DISPATCHED`; without a merge seam `TRANSLATING` goes straight
+to `ASSEMBLING` and chapters are joined naively; with merge on but no verify
+seam, `VERIFYING` is skipped. All of them are fallbacks the assembler still
+serves. Any escaping exception — domain error or a seam raising something
+unexpected — leaves the job `FAILED` and checkpointed, so a background run can
+never strand a job mid-lifecycle.)
 
 ## HTTP API
 
@@ -242,6 +276,7 @@ Precedence, lowest to highest: `src/config/default.toml` → an optional user TO
 | Max lines / unit | `POLYGLOT_MAX_LINES_PER_UNIT` | `200` |
 | Chunk strategy | `POLYGLOT_CHUNK_STRATEGY` | `structural` (or `lines`) |
 | Verification gate | `POLYGLOT_VERIFY` | `toolchain` (or `basic`) |
+| Contract-first pass | `POLYGLOT_CONTRACT` | `on` (or `off`) |
 | Ingest allow-list root | `POLYGLOT_INGEST_ROOT` | *(unset ⇒ no restriction)* |
 | Max files / ingest | `POLYGLOT_MAX_FILES` | `500` |
 | Max bytes / file | `POLYGLOT_MAX_FILE_BYTES` | `1000000` |

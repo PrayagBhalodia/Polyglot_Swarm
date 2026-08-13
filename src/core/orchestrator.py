@@ -33,18 +33,23 @@ from typing import Protocol, TypeVar
 
 from core.assembler import AssembledFile, assemble_job
 from core.chunker import Chunker
-from core.errors import PolyglotSwarmError, OrchestrationError, VerificationError
+from core.errors import OrchestrationError, VerificationError
 from core.merger import MergedFile, MergeFn, Merger, assemble_merged
 from core.verifier import RepairFn, Verifier, VerifyFn
 from models.agent import AgentAssignment, SwarmAgent
-from models.enums import AgentStatus, JobStatus, UnitStatus
+from models.contract import Contract
+from models.enums import AgentStatus, JobStatus, Language, UnitStatus
 from models.job import TranslationJob
 from models.result import TranslationResult
-from models.source import TranslationUnit
+from models.source import SourceFile, TranslationUnit
 from models.verification import VerificationResult
 
 # The seam the Brain track plugs into: translate one unit using one agent.
 TranslateFn = Callable[[TranslationUnit, SwarmAgent], TranslationResult]
+
+# The contract-first seam: read the whole codebase once and agree, up front, on
+# the names and signatures every chapter will then be translated against.
+ExtractContractFn = Callable[[Sequence[SourceFile], Language, Language], Contract]
 
 _T = TypeVar("_T")
 
@@ -68,7 +73,12 @@ class JobPersister(Protocol):
 # active (non-terminal) state and is enforced separately.
 _LEGAL_TRANSITIONS: dict[JobStatus, frozenset[JobStatus]] = {
     JobStatus.PENDING: frozenset({JobStatus.CHUNKING, JobStatus.FAILED}),
-    JobStatus.CHUNKING: frozenset({JobStatus.DISPATCHED, JobStatus.FAILED}),
+    # CHUNKING routes through ANALYZING when a contract seam is configured, and
+    # straight to DISPATCHED otherwise (the naive, contract-free path).
+    JobStatus.CHUNKING: frozenset(
+        {JobStatus.ANALYZING, JobStatus.DISPATCHED, JobStatus.FAILED}
+    ),
+    JobStatus.ANALYZING: frozenset({JobStatus.DISPATCHED, JobStatus.FAILED}),
     JobStatus.DISPATCHED: frozenset({JobStatus.TRANSLATING, JobStatus.FAILED}),
     # TRANSLATING may go straight to ASSEMBLING (naive join) or route through
     # MERGING first when agent-based reconciliation is enabled.
@@ -96,6 +106,7 @@ class RunReport:
     assignments: list[AgentAssignment] = field(default_factory=list)
     merged_files: list[MergedFile] = field(default_factory=list)
     verifications: list[VerificationResult] = field(default_factory=list)
+    contract: Contract | None = None
 
     @property
     def succeeded(self) -> bool:
@@ -130,6 +141,11 @@ class RunReport:
         """Total repair rounds performed across all files during verification."""
         return sum(v.attempts for v in self.verifications)
 
+    @property
+    def contract_symbols(self) -> int:
+        """Size of the shared contract every chapter was translated against."""
+        return len(self.contract) if self.contract is not None else 0
+
 
 class Orchestrator:
     """Coordinates a swarm of agents over a single :class:`TranslationJob`."""
@@ -142,6 +158,7 @@ class Orchestrator:
         merge_fn: MergeFn | None = None,
         verify_fn: VerifyFn | None = None,
         repair_fn: RepairFn | None = None,
+        extract_contract_fn: ExtractContractFn | None = None,
         max_repair_attempts: int = 1,
         max_concurrency: int | None = None,
         chunker: Chunker | None = None,
@@ -162,6 +179,9 @@ class Orchestrator:
         # seam is present, fix failures within budget before assembling.
         self._verify_fn = verify_fn
         self._repair_fn = repair_fn
+        # The contract-first pass. Absent => the naive path, where every chapter
+        # is translated in isolation and cross-file names are left to luck.
+        self._extract_contract_fn = extract_contract_fn
         self._max_repair_attempts = max_repair_attempts
         self._chunker = chunker or Chunker()
         self._persister = persister
@@ -236,12 +256,16 @@ class Orchestrator:
         report = RunReport(job=job)
         try:
             self._chunk(job)
+            self._analyze(job, report)
             self._dispatch(job, report)
             self._translate(job, report)
             self._merge(job, report)
             self._verify(job, report)
             self._assemble(job, report)
-        except PolyglotSwarmError:
+        except Exception:
+            # Any escape — a domain error or a seam that raised something
+            # unexpected — must leave the job terminal and checkpointed, or a
+            # background run would strand it mid-lifecycle forever.
             self._fail(job)
             raise
 
@@ -254,6 +278,25 @@ class Orchestrator:
             job_id=job.id,
             target_language=job.target_language,
         )
+        self._checkpoint(job)
+
+    def _analyze(self, job: TranslationJob, report: RunReport) -> None:
+        """Agree on the shared contract *before* anything is translated.
+
+        This is the whole point of the phase: every unit leaves here carrying
+        the same symbol table, so the agents are not each inventing a name for
+        the same function and leaving the merge tree — which only ever sees one
+        file — to reconcile a disagreement it cannot even observe.
+        """
+        if self._extract_contract_fn is None:
+            return
+        self._transition(job, JobStatus.ANALYZING)
+        contract = self._extract_contract_fn(
+            job.source_files, job.source_language, job.target_language
+        )
+        report.contract = contract
+        for unit in job.units:
+            unit.contract = contract
         self._checkpoint(job)
 
     def _dispatch(self, job: TranslationJob, report: RunReport) -> None:
@@ -326,7 +369,9 @@ class Orchestrator:
         merger = Merger(
             self._merge_fn, self._agents, max_concurrency=self._max_concurrency
         )
-        report.merged_files = merger.merge_job(job, report.results)
+        report.merged_files = merger.merge_job(
+            job, report.results, contract=report.contract
+        )
         self._checkpoint(job)
 
     def _verify(self, job: TranslationJob, report: RunReport) -> None:
