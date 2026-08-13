@@ -43,19 +43,49 @@
     background: linear-gradient(90deg, var(--accent), var(--accent2)); }
   .go:disabled { opacity: 0.6; cursor: progress; }
   #out { margin-top: 26px; display: none; }
+
+  /* --- Progress --- */
+  #progress { display: none; margin-top: 26px; }
+  .bar { height: 10px; border-radius: 999px; background: var(--card2);
+    border: 1px solid var(--line); overflow: hidden; }
+  .bar > i { display: block; height: 100%; width: 0;
+    background: linear-gradient(90deg, var(--accent), var(--accent2));
+    transition: width .35s ease; }
+  .bar.done > i { background: var(--ok); }
+  .bar.failed > i { background: var(--bad); }
+  .barline { display: flex; justify-content: space-between; align-items: baseline;
+    margin: 0 0 8px; font-size: 13px; color: var(--muted); }
+  .barline b { color: var(--text); font-weight: 600; text-transform: capitalize; }
+  .steps { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+  .step { font-size: 11px; letter-spacing: .04em; text-transform: uppercase;
+    color: var(--muted); background: var(--card2); border: 1px solid var(--line);
+    border-radius: 999px; padding: 3px 10px; opacity: .45; }
+  .step.on { opacity: 1; color: var(--text); border-color: var(--accent); }
+  .step.now { opacity: 1; color: #0f1220; background: var(--accent);
+    border-color: var(--accent); font-weight: 700; }
+
+  /* --- Results --- */
   .stats { display: flex; flex-wrap: wrap; gap: 10px; margin: 4px 0 18px; }
   .pill { background: var(--card2); border: 1px solid var(--line);
     border-radius: 999px; padding: 6px 13px; font-size: 13px; color: var(--muted); }
-  .pill b { color: var(--text); }
-  .pill.ok b { color: var(--ok); } .pill.bad b { color: var(--bad); }
+  .pill b { color: var(--text); } .pill.ok b { color: var(--ok); }
+  .pill.bad b { color: var(--bad); }
   .file { border: 1px solid var(--line); border-radius: 12px; overflow: hidden;
     margin-bottom: 14px; }
-  .file h4 { margin: 0; padding: 10px 14px; background: var(--card2);
-    font-size: 13px; font-weight: 600; color: var(--muted); }
-  pre { margin: 0; padding: 14px; overflow-x: auto; font-size: 13px;
+  .file header { display: flex; align-items: center; gap: 10px; padding: 9px 12px;
+    background: var(--card2); }
+  .file h4 { margin: 0; flex: 1; font-size: 13px; font-weight: 600;
+    color: var(--muted); overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; }
+  .file button { border: 1px solid var(--line); background: var(--card);
+    color: var(--text); border-radius: 8px; padding: 5px 11px; font-size: 12px;
+    cursor: pointer; white-space: nowrap; }
+  .file button:hover { border-color: var(--accent); color: var(--accent); }
+  pre { margin: 0; padding: 14px; overflow-x: auto; font-size: 13px; max-height: 460px;
     font-family: "SF Mono", "JetBrains Mono", Menlo, monospace; color: #d7ddff; }
   .error { background: rgba(255,122,144,0.12); border: 1px solid var(--bad);
-    color: #ffc2cd; padding: 12px 14px; border-radius: 10px; }
+    color: #ffc2cd; padding: 12px 14px; border-radius: 10px;
+    white-space: pre-wrap; word-break: break-word; }
   .hint { color: var(--muted); font-size: 12px; margin-top: 6px; }
 </style>
 </head>
@@ -97,6 +127,13 @@
     <button class="go" id="go">Translate ▶</button>
   </div>
 
+  <div id="progress">
+    <div class="barline"><b id="stage">Starting…</b><span id="pct">0%</span></div>
+    <div class="bar" id="bar"><i></i></div>
+    <div class="steps" id="steps"></div>
+    <div class="hint" id="note"></div>
+  </div>
+
   <div id="out"></div>
 </div>
 
@@ -111,10 +148,26 @@ const LABELS = {
   cpp: "C++", csharp: "C#", php: "PHP", vb6: "VB6",
   javascript: "JavaScript", typescript: "TypeScript",
 };
+// Used to name a downloaded file after the destination language.
+const EXTENSIONS = {
+  python: "py", javascript: "js", typescript: "ts", java: "java", c: "c",
+  cpp: "cpp", csharp: "cs", go: "go", rust: "rs", ruby: "rb", php: "php",
+  swift: "swift", kotlin: "kt", cobol: "cob", fortran: "f90", perl: "pl",
+  vb6: "bas", delphi: "pas",
+};
+// The lifecycle, and where each stage sits on the bar. TRANSLATING is the long
+// one, so it spans a range that the job's own unit progress fills in.
+const STAGES = [
+  ["pending", 2], ["chunking", 8], ["dispatched", 14], ["translating", 20],
+  ["merging", 72], ["verifying", 84], ["assembling", 94], ["completed", 100],
+];
+const AT = Object.fromEntries(STAGES);
+const POLL_MS = 600;
+
 const label = (v) => LABELS[v] || v.charAt(0).toUpperCase() + v.slice(1);
+const $ = (id) => document.getElementById(id);
 let kind = "github";
 
-const $ = (id) => document.getElementById(id);
 function fill(sel, values, def) {
   sel.innerHTML = values.map((v) =>
     `<option value="${v}" ${v === def ? "selected" : ""}>${label(v)}</option>`).join("");
@@ -137,26 +190,147 @@ $("kind").addEventListener("click", (e) => {
   }
 });
 
-function pill(label, value, cls = "") {
-  return `<span class="pill ${cls}"><b>${value}</b> ${label}</span>`;
-}
 function esc(s) {
-  return s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+  return String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+}
+function pill(text, value, cls = "") {
+  return `<span class="pill ${cls}"><b>${esc(value)}</b> ${esc(text)}</span>`;
 }
 function fail(msg) {
   $("out").style.display = "block";
   $("out").innerHTML = `<div class="error">${esc(msg)}</div>`;
 }
 
-async function post(url, body) {
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+async function api(method, url, body) {
+  const options = { method };
+  if (body !== undefined) {
+    options.headers = { "Content-Type": "application/json" };
+    options.body = JSON.stringify(body);
+  }
+  const res = await fetch(url, options);
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error((data.error && data.error.message) || `HTTP ${res.status}`);
   return data;
+}
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// --- Progress -------------------------------------------------------------
+
+function showProgress(on) {
+  $("progress").style.display = on ? "block" : "none";
+  if (on) {
+    $("steps").innerHTML = STAGES.slice(0, -1)
+      .map(([s]) => `<span class="step" data-stage="${s}">${s}</span>`).join("");
+    $("note").textContent = "";
+    paint("pending", 0, 0);
+  }
+}
+
+function percentFor(status, progress) {
+  if (status === "failed") return 100;
+  const base = AT[status];
+  if (base === undefined) return 0;
+  if (status === "translating") {
+    return Math.round(AT.translating + progress * (AT.merging - AT.translating));
+  }
+  return base;
+}
+
+function paint(status, progress, units) {
+  const pct = percentFor(status, progress);
+  $("bar").querySelector("i").style.width = pct + "%";
+  $("bar").classList.toggle("done", status === "completed");
+  $("bar").classList.toggle("failed", status === "failed");
+  $("pct").textContent = pct + "%";
+  $("stage").textContent = status === "translating" && units
+    ? `Translating — ${Math.round(progress * units)}/${units} chapters`
+    : status;
+
+  const order = STAGES.map(([s]) => s);
+  const at = order.indexOf(status);
+  [...$("steps").children].forEach((el, i) => {
+    el.classList.toggle("on", at >= 0 && i < at);
+    el.classList.toggle("now", i === at);
+  });
+}
+
+// --- Results --------------------------------------------------------------
+
+function download(filename, content) {
+  const url = URL.createObjectURL(new Blob([content], { type: "text/plain" }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function targetName(sourcePath, language) {
+  const base = sourcePath.split("/").pop().replace(/\.[^.]+$/, "");
+  return `${base}.${EXTENSIONS[language] || "txt"}`;
+}
+
+function render(output) {
+  const files = output.assembled_files || [];
+  const stats = [
+    pill("status", output.status),
+    pill("files", output.file_count),
+    pill("merges", output.merges),
+    pill("depth", output.merge_depth),
+    pill(output.verified ? "verified" : "unverified",
+         output.verified ? "✓" : "✕", output.verified ? "ok" : "bad"),
+    pill("repairs", output.repairs),
+    pill("tokens", output.total_tokens),
+  ].join("");
+
+  const cards = files.map((f, i) => `
+    <div class="file">
+      <header>
+        <h4>${esc(f.source_path)} → ${esc(f.target_language)} · ${f.unit_count} chapters</h4>
+        <button data-copy="${i}">Copy</button>
+        <button data-download="${i}">Download</button>
+      </header>
+      <pre>${esc(f.content)}</pre>
+    </div>`).join("");
+
+  const problem = output.error
+    ? `<div class="error">${esc(output.error)}</div>`
+    : "";
+
+  $("out").style.display = "block";
+  $("out").innerHTML = `${problem}<div class="stats">${stats}</div>${cards}`;
+
+  $("out").onclick = async (e) => {
+    const button = e.target.closest("button");
+    if (!button) return;
+    const file = files[Number(button.dataset.copy ?? button.dataset.download)];
+    if (!file) return;
+    if (button.dataset.download !== undefined) {
+      download(targetName(file.source_path, file.target_language), file.content);
+      return;
+    }
+    const original = button.textContent;
+    try {
+      await navigator.clipboard.writeText(file.content);
+      button.textContent = "Copied ✓";
+    } catch {
+      button.textContent = "Copy failed";
+    }
+    setTimeout(() => { button.textContent = original; }, 1500);
+  };
+}
+
+// --- The run --------------------------------------------------------------
+
+async function poll(jobId) {
+  for (;;) {
+    const job = await api("GET", `/jobs/${jobId}`);
+    paint(job.status, job.progress || 0, job.total_units || 0);
+    if (job.status === "completed" || job.status === "failed") return job;
+    await sleep(POLL_MS);
+  }
 }
 
 $("go").addEventListener("click", async () => {
@@ -164,45 +338,40 @@ $("go").addEventListener("click", async () => {
   if (!location) return fail("Please enter a " + (kind === "github" ? "GitHub URL." : "folder path."));
   if ($("source").value === $("target").value)
     return fail("Source and destination languages must be different.");
+
   const btn = $("go");
   btn.disabled = true; btn.textContent = "Translating…";
   $("out").style.display = "none";
+  $("out").innerHTML = "";
+  showProgress(true);
+
   try {
-    const job = await post("/jobs/ingest", {
+    $("note").textContent = kind === "github"
+      ? "Cloning the repository…" : "Reading the folder…";
+    const job = await api("POST", "/jobs/ingest", {
       source_kind: kind,
       location,
       source_language: $("source").value,
       target_language: $("target").value,
       name: $("name").value.trim() || undefined,
     });
-    const run = await post(`/jobs/${job.id}/run`, {});
-    render(run.job, run.report);
+
+    $("note").textContent = "";
+    // 202 Accepted: the pipeline runs in the background, we watch the job.
+    await api("POST", `/jobs/${job.id}/run`);
+    const finished = await poll(job.id);
+    const output = await api("GET", `/jobs/${job.id}/output`);
+    render(output);
+    if (finished.status === "failed") {
+      $("note").textContent = "The run failed — see the message above.";
+    }
   } catch (e) {
+    showProgress(false);
     fail(e.message || String(e));
   } finally {
     btn.disabled = false; btn.textContent = "Translate ▶";
   }
 });
-
-function render(job, report) {
-  const okCls = report.verified ? "ok" : "bad";
-  const stats = [
-    pill("status", report.status),
-    pill("units", job.units ? job.units.length : "—"),
-    pill("merges", report.merges),
-    pill("depth", report.merge_depth),
-    pill(report.verified ? "verified" : "unverified", report.verified ? "✓" : "✕", okCls),
-    pill("repairs", report.repairs),
-    pill("tokens", report.total_tokens),
-  ].join("");
-  const files = (report.assembled_files || []).map((f) => `
-    <div class="file">
-      <h4>${esc(f.source_path)} → ${esc(f.target_language)} · ${f.unit_count} chapters</h4>
-      <pre>${esc(f.content)}</pre>
-    </div>`).join("");
-  $("out").style.display = "block";
-  $("out").innerHTML = `<div class="stats">${stats}</div>${files}`;
-}
 </script>
 </body>
 </html>

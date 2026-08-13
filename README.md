@@ -217,8 +217,13 @@ python scripts/serve_api.py
 Then open <http://127.0.0.1:8000> for the web UI: paste a **GitHub URL** or a
 **local folder path**, pick a **destination language**, and hit *Translate*. The
 server ingests the sources (a shallow `git clone` for GitHub, a directory walk
-for a local path), runs the full pipeline, and renders the assembled output with
-its merge/verify stats. Runs offline with the stub Brain — no API key needed.
+for a local path) and starts the pipeline in the background; the page polls the
+job and shows a **real progress bar** — the lifecycle stage plus, during the
+long translation phase, a live chapter count — then renders each translated file
+with **Copy** and **Download** buttons and the merge/verify statistics. A failed
+run shows its reason instead of hanging. It is one self-contained HTML file:
+vanilla JS, no build step, no dependencies. Runs offline with the stub Brain —
+no API key needed.
 
 Install `mypy` (`pip install -e '.[dev]'`) to enable the strict type check inside
 `verify.sh`; without it, that step is skipped and the rest still runs.
