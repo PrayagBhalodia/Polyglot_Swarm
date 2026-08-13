@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Local database artifacts
+*.db
+*.sqlite
+*.sqlite3
+
+# Secrets / local config
+.env
+*.local.toml
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store

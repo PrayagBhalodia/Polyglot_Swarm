@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "polyglot-swarm"
+version = "0.1.0"
+description = "Track A: Core & Infrastructure for the Polyglot Swarm code-translation factory"
+readme = "README.md"
+requires-python = ">=3.11"
+# Track A is intentionally dependency-free (stdlib only) so local verification
+# never needs the network. The Brain/runtime tracks add their own deps (e.g. a
+# Groq client) on top of these contracts.
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["mypy>=1.8"]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+mypy_path = "src"
+ignore_missing_imports = true
