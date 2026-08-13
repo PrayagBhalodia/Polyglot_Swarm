@@ -144,6 +144,9 @@ def _report_dict(report: RunReport) -> dict[str, Any]:
         "succeeded": report.succeeded,
         "total_tokens": report.total_tokens,
         "assignments": len(report.assignments),
+        "merges": report.merge_count,
+        "merge_tokens": report.merge_tokens,
+        "merge_depth": report.merge_depth,
         "assembled_files": [
             {
                 "source_path": f.source_path,

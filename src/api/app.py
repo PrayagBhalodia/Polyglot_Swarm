@@ -15,6 +15,7 @@ from api.http import Handler, Middleware, Request, Response
 from config.settings import Settings
 from controllers.agent_controller import AgentController
 from controllers.job_controller import JobController
+from core.merger import MergeFn
 from core.orchestrator import TranslateFn
 from db.connection import Database
 from middleware.errors import (
@@ -69,9 +70,15 @@ def build_app(
     *,
     settings: Settings,
     translate_fn: TranslateFn | None = None,
+    merge_fn: MergeFn | None = None,
 ) -> Application:
     """Compose the whole API over an initialised :class:`Database`."""
-    service = TranslationService(db, settings=settings, translate_fn=translate_fn)
+    service = TranslationService(
+        db,
+        settings=settings,
+        translate_fn=translate_fn,
+        merge_fn=merge_fn,
+    )
     jobs = JobController(service)
     agents = AgentController(service)
     router = build_router(jobs=jobs, agents=agents)

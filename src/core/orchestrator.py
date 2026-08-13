@@ -23,7 +23,8 @@ from typing import Protocol
 
 from core.assembler import AssembledFile, assemble_job
 from core.chunker import Chunker
-from core.errors import OrchestrationError
+from core.errors import PolyglotSwarmError, OrchestrationError
+from core.merger import MergedFile, MergeFn, Merger, assemble_merged
 from models.agent import AgentAssignment, SwarmAgent
 from models.enums import AgentStatus, JobStatus, UnitStatus
 from models.job import TranslationJob
@@ -50,7 +51,12 @@ _LEGAL_TRANSITIONS: dict[JobStatus, frozenset[JobStatus]] = {
     JobStatus.PENDING: frozenset({JobStatus.CHUNKING, JobStatus.FAILED}),
     JobStatus.CHUNKING: frozenset({JobStatus.DISPATCHED, JobStatus.FAILED}),
     JobStatus.DISPATCHED: frozenset({JobStatus.TRANSLATING, JobStatus.FAILED}),
-    JobStatus.TRANSLATING: frozenset({JobStatus.ASSEMBLING, JobStatus.FAILED}),
+    # TRANSLATING may go straight to ASSEMBLING (naive join) or route through
+    # MERGING first when agent-based reconciliation is enabled.
+    JobStatus.TRANSLATING: frozenset(
+        {JobStatus.MERGING, JobStatus.ASSEMBLING, JobStatus.FAILED}
+    ),
+    JobStatus.MERGING: frozenset({JobStatus.ASSEMBLING, JobStatus.FAILED}),
     JobStatus.ASSEMBLING: frozenset({JobStatus.COMPLETED, JobStatus.FAILED}),
     JobStatus.COMPLETED: frozenset(),
     JobStatus.FAILED: frozenset(),
@@ -65,6 +71,7 @@ class RunReport:
     results: dict[str, TranslationResult] = field(default_factory=dict)
     assembled_files: list[AssembledFile] = field(default_factory=list)
     assignments: list[AgentAssignment] = field(default_factory=list)
+    merged_files: list[MergedFile] = field(default_factory=list)
 
     @property
     def succeeded(self) -> bool:
@@ -72,7 +79,22 @@ class RunReport:
 
     @property
     def total_tokens(self) -> int:
+        """Tokens spent translating chapters (merge cost is tracked separately)."""
         return sum(r.tokens_used for r in self.results.values())
+
+    @property
+    def merge_count(self) -> int:
+        """Number of pairwise reconciliation steps performed across all files."""
+        return sum(m.merge_count for m in self.merged_files)
+
+    @property
+    def merge_tokens(self) -> int:
+        return sum(m.tokens_used for m in self.merged_files)
+
+    @property
+    def merge_depth(self) -> int:
+        """Height of the tallest merge tree (0 when no merging happened)."""
+        return max((m.depth for m in self.merged_files), default=0)
 
 
 class Orchestrator:
@@ -83,6 +105,7 @@ class Orchestrator:
         agents: Sequence[SwarmAgent],
         translate_fn: TranslateFn,
         *,
+        merge_fn: MergeFn | None = None,
         chunker: Chunker | None = None,
         persister: JobPersister | None = None,
     ) -> None:
@@ -90,6 +113,9 @@ class Orchestrator:
             raise OrchestrationError("orchestrator requires at least one agent")
         self._agents = list(agents)
         self._translate_fn = translate_fn
+        # When a merge seam is supplied, chapters are reconciled pairwise before
+        # assembly; otherwise the pipeline falls back to a naive ordered join.
+        self._merge_fn = merge_fn
         self._chunker = chunker or Chunker()
         self._persister = persister
 
@@ -138,8 +164,9 @@ class Orchestrator:
             self._chunk(job)
             self._dispatch(job, report)
             self._translate(job, report)
+            self._merge(job, report)
             self._assemble(job, report)
-        except OrchestrationError:
+        except PolyglotSwarmError:
             self._fail(job)
             raise
 
@@ -190,15 +217,34 @@ class Orchestrator:
 
         self._checkpoint(job)
 
+    def _merge(self, job: TranslationJob, report: RunReport) -> None:
+        """Reconcile adjacent chapters pairwise (skipped in the naive path)."""
+        if self._merge_fn is None:
+            return
+        self._ensure_no_failed_units(job)
+        self._transition(job, JobStatus.MERGING)
+        merger = Merger(self._merge_fn, self._agents)
+        report.merged_files = merger.merge_job(job, report.results)
+        self._checkpoint(job)
+
     def _assemble(self, job: TranslationJob, report: RunReport) -> None:
+        if self._merge_fn is None:
+            # Naive path: the failed-unit guard runs here since merging was
+            # skipped; join the raw translated chapters in order.
+            self._ensure_no_failed_units(job)
+            self._transition(job, JobStatus.ASSEMBLING)
+            report.assembled_files = assemble_job(job, report.results)
+        else:
+            self._transition(job, JobStatus.ASSEMBLING)
+            report.assembled_files = assemble_merged(job, report.merged_files)
+        self._transition(job, JobStatus.COMPLETED)
+
+    def _ensure_no_failed_units(self, job: TranslationJob) -> None:
         if job.failed_units:
             raise OrchestrationError(
                 f"{job.failed_units} unit(s) failed to translate; "
                 "refusing to assemble a partial result"
             )
-        self._transition(job, JobStatus.ASSEMBLING)
-        report.assembled_files = assemble_job(job, report.results)
-        self._transition(job, JobStatus.COMPLETED)
 
     def _fail(self, job: TranslationJob) -> None:
         if not job.status.is_terminal:

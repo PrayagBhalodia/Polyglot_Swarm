@@ -27,6 +27,7 @@ from models.enums import Language  # noqa: E402
 from models.job import TranslationJob  # noqa: E402
 from models.result import TranslationResult  # noqa: E402
 from models.source import SourceFile, TranslationUnit  # noqa: E402
+from services.stub_merger import stub_merge  # noqa: E402
 
 LEGACY_COBOL = """       IDENTIFICATION DIVISION.
        PROGRAM-ID. PAYROLL.
@@ -87,6 +88,7 @@ def main() -> int:
     orch = Orchestrator(
         agents,
         stub_translate,
+        merge_fn=stub_merge,
         chunker=Chunker(max_lines_per_unit=4),
         persister=job_repo,
     )
@@ -99,6 +101,8 @@ def main() -> int:
     print(f"\nJob {job.name!r} -> {job.status.value}")
     print(f"Units: {job.total_units}  |  progress: {job.progress:.0%}  |  "
           f"tokens: {report.total_tokens}")
+    print(f"Merge tree: {report.merge_count} reconciliation(s), "
+          f"depth {report.merge_depth}, merge tokens {report.merge_tokens}")
     print("\n===== ASSEMBLED PYTHON =====\n")
     for assembled in report.assembled_files:
         print(f"# file: {assembled.source_path}  ({assembled.unit_count} chapters)")

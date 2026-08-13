@@ -19,6 +19,10 @@ class OrchestrationError(PolyglotSwarmError):
     """Raised for illegal job-lifecycle transitions or dispatch failures."""
 
 
+class MergeError(PolyglotSwarmError):
+    """Raised when two translated chapters cannot be reconciled into one."""
+
+
 class AssemblyError(PolyglotSwarmError):
     """Raised when translated units cannot be reassembled into a file."""
 

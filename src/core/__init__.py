@@ -14,9 +14,11 @@ from core.chunker import Chunker
 from core.errors import (
     AssemblyError,
     ChunkingError,
+    MergeError,
     OrchestrationError,
     PolyglotSwarmError,
 )
+from core.merger import MergedFile, MergeFn, Merger, assemble_merged
 from core.orchestrator import Orchestrator, TranslateFn
 
 __all__ = [
@@ -24,9 +26,14 @@ __all__ = [
     "AssemblyError",
     "Chunker",
     "ChunkingError",
+    "MergeError",
+    "MergeFn",
+    "MergedFile",
+    "Merger",
     "Orchestrator",
     "OrchestrationError",
     "PolyglotSwarmError",
     "TranslateFn",
     "assemble_job",
+    "assemble_merged",
 ]

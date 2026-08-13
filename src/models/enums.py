@@ -52,7 +52,8 @@ class JobStatus(str, Enum):
     CHUNKING = "chunking"      # splitting source files into units
     DISPATCHED = "dispatched"  # units assigned to agents
     TRANSLATING = "translating"  # agents are working
-    ASSEMBLING = "assembling"  # taping translated chapters back together
+    MERGING = "merging"        # agents reconcile adjacent chapters pairwise
+    ASSEMBLING = "assembling"  # taping merged chapters back together
     COMPLETED = "completed"    # terminal success
     FAILED = "failed"          # terminal failure
 

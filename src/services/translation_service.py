@@ -14,6 +14,7 @@ from typing import Any
 
 from config.settings import Settings
 from core.chunker import Chunker
+from core.merger import MergeFn
 from core.orchestrator import Orchestrator, RunReport, TranslateFn
 from db.connection import Database
 from db.repository import JobRepository, ResultRepository
@@ -23,6 +24,7 @@ from models.job import TranslationJob
 from models.result import TranslationResult
 from models.source import SourceFile
 from services.stub_brain import stub_translate
+from services.stub_merger import stub_merge
 
 
 class TranslationService:
@@ -34,12 +36,16 @@ class TranslationService:
         *,
         settings: Settings,
         translate_fn: TranslateFn | None = None,
+        merge_fn: MergeFn | None = None,
     ) -> None:
         self._settings = settings
         self._jobs = JobRepository(db)
         self._results = ResultRepository(db)
         # The Groq Brain plugs in here; default to the offline stub.
         self._translate_fn: TranslateFn = translate_fn or stub_translate
+        # The reconciliation Brain plugs in here; default to the offline stub so
+        # adjacent chapters are merged pairwise instead of naively concatenated.
+        self._merge_fn: MergeFn = merge_fn or stub_merge
 
     # --- Commands -----------------------------------------------------------
 
@@ -85,6 +91,7 @@ class TranslationService:
         orchestrator = Orchestrator(
             self._build_agents(),
             self._translate_fn,
+            merge_fn=self._merge_fn,
             chunker=self._build_chunker(),
             persister=self._jobs,
         )

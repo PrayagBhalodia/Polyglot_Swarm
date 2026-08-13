@@ -8,6 +8,7 @@ its :meth:`save` method. ``ResultRepository`` stores per-unit translations.
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime
 
 from core.errors import RepositoryError
 from db.connection import Database
@@ -259,7 +260,5 @@ class ResultRepository:
         )
 
 
-def _parse_dt(value: str):
-    from datetime import datetime
-
+def _parse_dt(value: str) -> datetime:
     return datetime.fromisoformat(value)

@@ -16,16 +16,27 @@ Translating a 1,000-page manual from ancient Greek to English:
 Here the "translators" are Groq-powered agents; the "manager" is the
 **Orchestrator**; the "scissors" is the **Chunker**.
 
+Code isn't prose, though: adjacent chapters share types, signatures, and imports
+where they meet, so they can't just be stacked back together. Before a file is
+emitted, a second kind of agent — a **reconciler** — merges neighbouring
+chapters *pairwise*, folding them up a binary tree until one coherent file
+remains. Think of an editor passing over each seam between two translated
+chapters, then over the seams between those, and so on.
+
 ## Design in one breath
 
-The whole system is built around a single seam:
-`translate_fn(unit, agent) -> TranslationResult`. Everything *except* that one
-function — chunking, dispatch, lifecycle, reassembly, persistence, and the HTTP
-API — is deterministic coordination logic that builds, runs, and is fully tested
-with **zero network access and no API key**. The actual intelligence (the Groq
-call that turns COBOL into Python) plugs into that seam; a local stub stands in
-everywhere else. There are **no runtime dependencies** — the project is
-stdlib-only (Python ≥ 3.11).
+The whole system is built around two symmetric seams:
+
+- `translate_fn(unit, agent) -> TranslationResult` — translate one chapter.
+- `merge_fn(task, agent) -> MergeResult` — reconcile two adjacent chapters.
+
+Everything *except* those two functions — chunking, dispatch, lifecycle, the
+recursive merge tree, reassembly, persistence, and the HTTP API — is
+deterministic coordination logic that builds, runs, and is fully tested with
+**zero network access and no API key**. The actual intelligence (the Groq calls
+that turn COBOL into Python and stitch the pieces together) plugs into those
+seams; local stubs stand in everywhere else. There are **no runtime
+dependencies** — the project is stdlib-only (Python ≥ 3.11).
 
 ## Architecture
 
@@ -36,11 +47,13 @@ src/
 │   ├── source.py     SourceFile, TranslationUnit  (a "chapter")
 │   ├── job.py        TranslationJob  (the aggregate root, derives progress)
 │   ├── agent.py      SwarmAgent, AgentAssignment
-│   └── result.py     TranslationResult  (the translate_fn boundary)
+│   ├── result.py     TranslationResult  (the translate_fn boundary)
+│   └── merge.py      MergeTask, MergeResult  (the merge_fn boundary)
 ├── core/         Coordination logic
 │   ├── chunker.py       Cut source files into units (the scissors)
 │   ├── orchestrator.py  Lifecycle state machine + dispatch (the manager)
-│   ├── assembler.py     Reassemble translated chapters in order
+│   ├── merger.py        Reconcile adjacent chapters pairwise (the merge tree)
+│   ├── assembler.py     Reassemble chapters in order (naive-join fallback)
 │   └── errors.py        Exception hierarchy
 ├── config/       Layered settings (defaults → TOML → env); secrets only in env
 ├── db/           SQLite data-access layer (repositories, never touched above db/)
@@ -63,23 +76,36 @@ isolation.
 ```
 legacy files ──chunk──▶ units ──dispatch──▶ agents ──translate_fn──▶ results
                                                                         │
-   assembled target files ◀──assemble── (ordered by unit index) ◀──────┘
+                                        ┌──── merge_fn (pairwise, ◀─────┘
+                                        │      recursive up a tree)
+                                        ▼
+   assembled target files ◀──assemble── one coherent piece per file
 ```
+
+The merge tree is order-preserving and log-depth: `n` chapters take
+`ceil(log2(n))` levels, and every pair at a level can be reconciled by a
+different agent, so throughput scales with the swarm. An odd chapter at any
+level rides up unchanged to pair on the next, so any chapter count works.
 
 A job advances through a **validated lifecycle** — illegal transitions raise
 rather than silently corrupting state:
 
 ```
-PENDING → CHUNKING → DISPATCHED → TRANSLATING → ASSEMBLING → COMPLETED
-                                                            ↘ FAILED (from any active state)
+PENDING → CHUNKING → DISPATCHED → TRANSLATING → MERGING → ASSEMBLING → COMPLETED
+                                                        ↘ FAILED (from any active state)
 ```
+
+(With the merge seam disabled, `TRANSLATING` goes straight to `ASSEMBLING` and
+chapters are joined naively — the fallback path the assembler still serves.)
 
 ## HTTP API
 
 The pipeline is exposed as a stdlib-only JSON API (`http.server`, no new deps).
-The translation seam defaults to an offline stub, so the server runs fully
-working endpoints with **no network and no API key**; a real Groq client is
-injected in its place via `build_app(..., translate_fn=...)` for production.
+Both seams default to offline stubs, so the server runs fully working endpoints
+with **no network and no API key**; real Groq clients are injected in their place
+via `build_app(..., translate_fn=..., merge_fn=...)` for production. The
+`POST /jobs/{id}/run` response reports the merge tree it built (`merges`,
+`merge_depth`, `merge_tokens`) alongside the assembled output.
 
 | Method & path | Purpose |
 |---|---|
@@ -94,7 +120,7 @@ injected in its place via `build_app(..., translate_fn=...)` for production.
 
 Errors return a consistent body — `{"error": {"status": 404, "message": "..."}}` —
 with domain failures mapped to HTTP status (illegal lifecycle → `409`,
-validation → `400`, chunking/assembly → `422`).
+validation → `400`, chunking/merge/assembly → `422`).
 
 ## Quick start
 
