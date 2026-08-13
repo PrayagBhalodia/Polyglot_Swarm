@@ -25,18 +25,21 @@ chapters, then over the seams between those, and so on.
 
 ## Design in one breath
 
-The whole system is built around two symmetric seams:
+The whole system is built around a few symmetric seams:
 
 - `translate_fn(unit, agent) -> TranslationResult` — translate one chapter.
 - `merge_fn(task, agent) -> MergeResult` — reconcile two adjacent chapters.
+- `verify_fn(content, language) -> (ok, errors)` — does the merged file parse?
+- `repair_fn(request, agent) -> fixed_content` — fix a file the gate rejected.
 
-Everything *except* those two functions — chunking, dispatch, lifecycle, the
-recursive merge tree, reassembly, persistence, and the HTTP API — is
-deterministic coordination logic that builds, runs, and is fully tested with
-**zero network access and no API key**. The actual intelligence (the Groq calls
-that turn COBOL into Python and stitch the pieces together) plugs into those
-seams; local stubs stand in everywhere else. There are **no runtime
-dependencies** — the project is stdlib-only (Python ≥ 3.11).
+Everything *except* those functions — chunking, dispatch, lifecycle, the
+recursive merge tree, the verification gate, reassembly, persistence, and the
+HTTP API — is deterministic coordination logic that builds, runs, and is fully
+tested with **zero network access and no API key**. The actual intelligence (the
+Groq calls that translate, reconcile, and repair) plugs into those seams; local
+stubs stand in everywhere else — except `verify_fn`, whose default is a genuine
+`ast.parse`. There are **no runtime dependencies** — the project is stdlib-only
+(Python ≥ 3.11).
 
 ## Architecture
 
@@ -53,6 +56,7 @@ src/
 │   ├── chunker.py       Cut source files into units (the scissors)
 │   ├── orchestrator.py  Lifecycle state machine + dispatch (the manager)
 │   ├── merger.py        Reconcile adjacent chapters pairwise (the merge tree)
+│   ├── verifier.py      Gate merged output on parse-soundness, repair in a loop
 │   ├── assembler.py     Reassemble chapters in order (naive-join fallback)
 │   └── errors.py        Exception hierarchy
 ├── config/       Layered settings (defaults → TOML → env); secrets only in env
@@ -79,7 +83,9 @@ legacy files ──chunk──▶ units ──dispatch──▶ agents ──tra
                                         ┌──── merge_fn (pairwise, ◀─────┘
                                         │      recursive up a tree)
                                         ▼
-   assembled target files ◀──assemble── one coherent piece per file
+                             verify_fn ──ok?──▶ assemble ──▶ target files
+                                 ▲   │
+                                 └───┘ repair_fn (fix + re-check, bounded)
 ```
 
 The merge tree is order-preserving and log-depth: `n` chapters take
@@ -87,16 +93,25 @@ The merge tree is order-preserving and log-depth: `n` chapters take
 different agent, so throughput scales with the swarm. An odd chapter at any
 level rides up unchanged to pair on the next, so any chapter count works.
 
+Each merged file then passes a **verification gate** before assembly: a
+`verify_fn` parses it (a real `ast.parse` for Python; a structural check
+otherwise), and if it fails, a `repair_fn` agent is handed the broken file plus
+its diagnostics to fix — re-checked after each attempt, up to a bound. A file
+that still fails its repair budget aborts the job rather than emitting broken
+code. This is the self-correcting loop: the compiler is the oracle, repair is
+the feedback.
+
 A job advances through a **validated lifecycle** — illegal transitions raise
 rather than silently corrupting state:
 
 ```
-PENDING → CHUNKING → DISPATCHED → TRANSLATING → MERGING → ASSEMBLING → COMPLETED
-                                                        ↘ FAILED (from any active state)
+PENDING → CHUNKING → DISPATCHED → TRANSLATING → MERGING → VERIFYING → ASSEMBLING → COMPLETED
+                                                                    ↘ FAILED (from any active state)
 ```
 
 (With the merge seam disabled, `TRANSLATING` goes straight to `ASSEMBLING` and
-chapters are joined naively — the fallback path the assembler still serves.)
+chapters are joined naively; with merge on but no verify seam, `VERIFYING` is
+skipped. Both are fallbacks the assembler still serves.)
 
 ## HTTP API
 

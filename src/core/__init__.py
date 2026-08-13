@@ -17,9 +17,11 @@ from core.errors import (
     MergeError,
     OrchestrationError,
     PolyglotSwarmError,
+    VerificationError,
 )
 from core.merger import MergedFile, MergeFn, Merger, assemble_merged
 from core.orchestrator import Orchestrator, TranslateFn
+from core.verifier import RepairFn, Verifier, VerifyFn
 
 __all__ = [
     "AssembledFile",
@@ -33,7 +35,11 @@ __all__ = [
     "Orchestrator",
     "OrchestrationError",
     "PolyglotSwarmError",
+    "RepairFn",
     "TranslateFn",
+    "VerificationError",
+    "Verifier",
+    "VerifyFn",
     "assemble_job",
     "assemble_merged",
 ]

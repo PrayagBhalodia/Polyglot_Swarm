@@ -24,6 +24,7 @@ from core.errors import (
     OrchestrationError,
     PolyglotSwarmError,
     RepositoryError,
+    VerificationError,
 )
 
 
@@ -89,6 +90,7 @@ _CORE_ERROR_STATUS: dict[type[PolyglotSwarmError], int] = {
     OrchestrationError: 409,
     ChunkingError: 422,
     MergeError: 422,
+    VerificationError: 422,
     AssemblyError: 422,
     ConfigError: 500,
     RepositoryError: 500,

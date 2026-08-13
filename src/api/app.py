@@ -17,6 +17,7 @@ from controllers.agent_controller import AgentController
 from controllers.job_controller import JobController
 from core.merger import MergeFn
 from core.orchestrator import TranslateFn
+from core.verifier import RepairFn, VerifyFn
 from db.connection import Database
 from middleware.errors import (
     MethodNotAllowedError,
@@ -71,6 +72,8 @@ def build_app(
     settings: Settings,
     translate_fn: TranslateFn | None = None,
     merge_fn: MergeFn | None = None,
+    verify_fn: VerifyFn | None = None,
+    repair_fn: RepairFn | None = None,
 ) -> Application:
     """Compose the whole API over an initialised :class:`Database`."""
     service = TranslationService(
@@ -78,6 +81,8 @@ def build_app(
         settings=settings,
         translate_fn=translate_fn,
         merge_fn=merge_fn,
+        verify_fn=verify_fn,
+        repair_fn=repair_fn,
     )
     jobs = JobController(service)
     agents = AgentController(service)

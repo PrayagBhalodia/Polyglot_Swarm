@@ -23,6 +23,10 @@ class MergeError(PolyglotSwarmError):
     """Raised when two translated chapters cannot be reconciled into one."""
 
 
+class VerificationError(PolyglotSwarmError):
+    """Raised when merged output fails to verify (and cannot be repaired)."""
+
+
 class AssemblyError(PolyglotSwarmError):
     """Raised when translated units cannot be reassembled into a file."""
 

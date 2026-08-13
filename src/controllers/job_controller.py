@@ -147,6 +147,8 @@ def _report_dict(report: RunReport) -> dict[str, Any]:
         "merges": report.merge_count,
         "merge_tokens": report.merge_tokens,
         "merge_depth": report.merge_depth,
+        "verified": report.verified,
+        "repairs": report.repairs,
         "assembled_files": [
             {
                 "source_path": f.source_path,

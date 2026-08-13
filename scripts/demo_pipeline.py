@@ -28,6 +28,7 @@ from models.job import TranslationJob  # noqa: E402
 from models.result import TranslationResult  # noqa: E402
 from models.source import SourceFile, TranslationUnit  # noqa: E402
 from services.stub_merger import stub_merge  # noqa: E402
+from services.verification import default_verify  # noqa: E402
 
 LEGACY_COBOL = """       IDENTIFICATION DIVISION.
        PROGRAM-ID. PAYROLL.
@@ -46,11 +47,12 @@ LEGACY_COBOL = """       IDENTIFICATION DIVISION.
 
 def stub_translate(unit: TranslationUnit, agent: SwarmAgent) -> TranslationResult:
     """Stand-in for the Groq Brain: emits a labelled Python placeholder."""
-    lines = unit.content.splitlines()
-    body = "\n".join(f"    # {line.strip()}" for line in lines if line.strip())
+    comments = [f"    # {line.strip()}" for line in unit.content.splitlines() if line.strip()]
+    # End the body with a real statement so the placeholder is valid Python.
+    body = "\n".join([*comments, "    pass"])
     translated = (
         f"# --- chapter {unit.index} (translated by {agent.name}) ---\n"
-        f"def chapter_{unit.index}():\n{body or '    pass'}\n"
+        f"def chapter_{unit.index}():\n{body}\n"
     )
     return TranslationResult(
         unit_id=unit.id,
@@ -89,6 +91,7 @@ def main() -> int:
         agents,
         stub_translate,
         merge_fn=stub_merge,
+        verify_fn=default_verify,
         chunker=Chunker(max_lines_per_unit=4),
         persister=job_repo,
     )
@@ -103,6 +106,8 @@ def main() -> int:
           f"tokens: {report.total_tokens}")
     print(f"Merge tree: {report.merge_count} reconciliation(s), "
           f"depth {report.merge_depth}, merge tokens {report.merge_tokens}")
+    print(f"Verification: {'passed' if report.verified else 'FAILED'} "
+          f"({len(report.verifications)} file(s), {report.repairs} repair(s))")
     print("\n===== ASSEMBLED PYTHON =====\n")
     for assembled in report.assembled_files:
         print(f"# file: {assembled.source_path}  ({assembled.unit_count} chapters)")

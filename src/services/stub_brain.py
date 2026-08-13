@@ -17,11 +17,13 @@ from models.source import TranslationUnit
 
 def stub_translate(unit: TranslationUnit, agent: SwarmAgent) -> TranslationResult:
     """Emit a labelled placeholder translation for one unit (no network)."""
-    lines = unit.content.splitlines()
-    body = "\n".join(f"    # {line.strip()}" for line in lines if line.strip())
+    comments = [f"    # {line.strip()}" for line in unit.content.splitlines() if line.strip()]
+    # Always end the body with a real statement so the placeholder is valid
+    # Python and clears the verification gate.
+    body = "\n".join([*comments, "    pass"])
     translated = (
         f"# --- chapter {unit.index} (translated by {agent.name}) ---\n"
-        f"def chapter_{unit.index}():\n{body or '    pass'}\n"
+        f"def chapter_{unit.index}():\n{body}\n"
     )
     return TranslationResult(
         unit_id=unit.id,

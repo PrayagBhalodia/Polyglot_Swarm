@@ -23,13 +23,15 @@ from typing import Protocol
 
 from core.assembler import AssembledFile, assemble_job
 from core.chunker import Chunker
-from core.errors import PolyglotSwarmError, OrchestrationError
+from core.errors import PolyglotSwarmError, OrchestrationError, VerificationError
 from core.merger import MergedFile, MergeFn, Merger, assemble_merged
+from core.verifier import RepairFn, Verifier, VerifyFn
 from models.agent import AgentAssignment, SwarmAgent
 from models.enums import AgentStatus, JobStatus, UnitStatus
 from models.job import TranslationJob
 from models.result import TranslationResult
 from models.source import TranslationUnit
+from models.verification import VerificationResult
 
 # The seam the Brain track plugs into: translate one unit using one agent.
 TranslateFn = Callable[[TranslationUnit, SwarmAgent], TranslationResult]
@@ -56,7 +58,11 @@ _LEGAL_TRANSITIONS: dict[JobStatus, frozenset[JobStatus]] = {
     JobStatus.TRANSLATING: frozenset(
         {JobStatus.MERGING, JobStatus.ASSEMBLING, JobStatus.FAILED}
     ),
-    JobStatus.MERGING: frozenset({JobStatus.ASSEMBLING, JobStatus.FAILED}),
+    # MERGING may go straight to ASSEMBLING or through the VERIFYING gate first.
+    JobStatus.MERGING: frozenset(
+        {JobStatus.VERIFYING, JobStatus.ASSEMBLING, JobStatus.FAILED}
+    ),
+    JobStatus.VERIFYING: frozenset({JobStatus.ASSEMBLING, JobStatus.FAILED}),
     JobStatus.ASSEMBLING: frozenset({JobStatus.COMPLETED, JobStatus.FAILED}),
     JobStatus.COMPLETED: frozenset(),
     JobStatus.FAILED: frozenset(),
@@ -72,6 +78,7 @@ class RunReport:
     assembled_files: list[AssembledFile] = field(default_factory=list)
     assignments: list[AgentAssignment] = field(default_factory=list)
     merged_files: list[MergedFile] = field(default_factory=list)
+    verifications: list[VerificationResult] = field(default_factory=list)
 
     @property
     def succeeded(self) -> bool:
@@ -96,6 +103,16 @@ class RunReport:
         """Height of the tallest merge tree (0 when no merging happened)."""
         return max((m.depth for m in self.merged_files), default=0)
 
+    @property
+    def verified(self) -> bool:
+        """True when every verified file passed (vacuously true if none ran)."""
+        return all(v.ok for v in self.verifications)
+
+    @property
+    def repairs(self) -> int:
+        """Total repair rounds performed across all files during verification."""
+        return sum(v.attempts for v in self.verifications)
+
 
 class Orchestrator:
     """Coordinates a swarm of agents over a single :class:`TranslationJob`."""
@@ -106,6 +123,9 @@ class Orchestrator:
         translate_fn: TranslateFn,
         *,
         merge_fn: MergeFn | None = None,
+        verify_fn: VerifyFn | None = None,
+        repair_fn: RepairFn | None = None,
+        max_repair_attempts: int = 1,
         chunker: Chunker | None = None,
         persister: JobPersister | None = None,
     ) -> None:
@@ -116,6 +136,11 @@ class Orchestrator:
         # When a merge seam is supplied, chapters are reconciled pairwise before
         # assembly; otherwise the pipeline falls back to a naive ordered join.
         self._merge_fn = merge_fn
+        # An optional gate over merged output: verify each file and, if a repair
+        # seam is present, fix failures within budget before assembling.
+        self._verify_fn = verify_fn
+        self._repair_fn = repair_fn
+        self._max_repair_attempts = max_repair_attempts
         self._chunker = chunker or Chunker()
         self._persister = persister
 
@@ -165,6 +190,7 @@ class Orchestrator:
             self._dispatch(job, report)
             self._translate(job, report)
             self._merge(job, report)
+            self._verify(job, report)
             self._assemble(job, report)
         except PolyglotSwarmError:
             self._fail(job)
@@ -226,6 +252,38 @@ class Orchestrator:
         merger = Merger(self._merge_fn, self._agents)
         report.merged_files = merger.merge_job(job, report.results)
         self._checkpoint(job)
+
+    def _verify(self, job: TranslationJob, report: RunReport) -> None:
+        """Gate merged output on parse-soundness (skipped without a verify seam).
+
+        Only meaningful once chapters have been merged; a failing file that its
+        repair budget cannot fix aborts the job rather than assembling broken
+        code.
+        """
+        if self._merge_fn is None or self._verify_fn is None:
+            return
+        self._transition(job, JobStatus.VERIFYING)
+        verifier = Verifier(
+            self._verify_fn,
+            repair_fn=self._repair_fn,
+            agents=self._agents,
+            max_attempts=self._max_repair_attempts,
+        )
+        verified, results = verifier.verify(job, report.merged_files)
+        # Adopt the (possibly repaired) content for assembly.
+        report.merged_files = verified
+        report.verifications = results
+        self._checkpoint(job)
+
+        failures = [r for r in results if not r.ok]
+        if failures:
+            detail = "; ".join(
+                f"{r.source_file_id} ({', '.join(r.errors) or 'invalid'})"
+                for r in failures
+            )
+            raise VerificationError(
+                f"{len(failures)} merged file(s) failed verification: {detail}"
+            )
 
     def _assemble(self, job: TranslationJob, report: RunReport) -> None:
         if self._merge_fn is None:

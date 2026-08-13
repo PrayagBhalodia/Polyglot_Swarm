@@ -16,6 +16,7 @@ from config.settings import Settings
 from core.chunker import Chunker
 from core.merger import MergeFn
 from core.orchestrator import Orchestrator, RunReport, TranslateFn
+from core.verifier import RepairFn, VerifyFn
 from db.connection import Database
 from db.repository import JobRepository, ResultRepository
 from models.agent import SwarmAgent
@@ -25,6 +26,7 @@ from models.result import TranslationResult
 from models.source import SourceFile
 from services.stub_brain import stub_translate
 from services.stub_merger import stub_merge
+from services.verification import default_verify
 
 
 class TranslationService:
@@ -37,6 +39,8 @@ class TranslationService:
         settings: Settings,
         translate_fn: TranslateFn | None = None,
         merge_fn: MergeFn | None = None,
+        verify_fn: VerifyFn | None = None,
+        repair_fn: RepairFn | None = None,
     ) -> None:
         self._settings = settings
         self._jobs = JobRepository(db)
@@ -46,6 +50,10 @@ class TranslationService:
         # The reconciliation Brain plugs in here; default to the offline stub so
         # adjacent chapters are merged pairwise instead of naively concatenated.
         self._merge_fn: MergeFn = merge_fn or stub_merge
+        # The verification gate over merged output; the default parses the
+        # result offline. A repair seam is opt-in (None => the gate is pass/fail).
+        self._verify_fn: VerifyFn = verify_fn or default_verify
+        self._repair_fn: RepairFn | None = repair_fn
 
     # --- Commands -----------------------------------------------------------
 
@@ -92,6 +100,8 @@ class TranslationService:
             self._build_agents(),
             self._translate_fn,
             merge_fn=self._merge_fn,
+            verify_fn=self._verify_fn,
+            repair_fn=self._repair_fn,
             chunker=self._build_chunker(),
             persister=self._jobs,
         )
