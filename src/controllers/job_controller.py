@@ -6,9 +6,11 @@ Routes served (all JSON):
 * ``POST /jobs/ingest``       create a job from a local folder or GitHub repo
 * ``GET  /jobs``             list jobs (summaries)
 * ``GET  /jobs/{id}``        fetch one job (full aggregate)
-* ``POST /jobs/{id}/run``    run the translate pipeline
+* ``POST /jobs/{id}/run``    start the translate pipeline (``202``; ``?wait=1``
+                             runs it synchronously and returns the report)
 * ``GET  /jobs/{id}/units``  the job's units
 * ``GET  /jobs/{id}/results``  stored per-unit results
+* ``GET  /jobs/{id}/output``   assembled files + run statistics
 """
 
 from __future__ import annotations
@@ -17,14 +19,22 @@ from typing import Any
 
 from api.http import Request, Response
 from core.orchestrator import RunReport
-from middleware.errors import BadRequestError, NotFoundError
+from middleware.errors import BadRequestError, ConflictError, NotFoundError
+from models.enums import JobStatus
 from models.job import TranslationJob
+from services.job_runner import JobRunner
 from services.translation_service import TranslationService
+
+# Query values accepted as "yes" for ``?wait=``.
+_TRUTHY = frozenset({"1", "true", "yes", "on"})
 
 
 class JobController:
-    def __init__(self, service: TranslationService) -> None:
+    def __init__(
+        self, service: TranslationService, runner: JobRunner | None = None
+    ) -> None:
         self._service = service
+        self._runner = runner
 
     # --- Commands -----------------------------------------------------------
 
@@ -65,9 +75,47 @@ class JobController:
         return Response(201, job.to_dict(), {"Location": f"/jobs/{job.id}"})
 
     def run(self, request: Request) -> Response:
+        """Start the pipeline for a job.
+
+        Asynchronous by default: the run is handed to the :class:`JobRunner` and
+        the request returns ``202 Accepted`` at once, because a real repository
+        takes far longer than any client is willing to wait. Callers then poll
+        ``GET /jobs/{id}`` for ``status``/``progress`` and read
+        ``GET /jobs/{id}/output`` when it completes.
+
+        ``?wait=1`` keeps the original synchronous behaviour — the whole
+        pipeline runs inline and the full report comes back in the response —
+        which is what the deterministic end-to-end tests use.
+        """
         job = self._load(request)
-        report = self._service.run(job)
-        return Response(200, {"job": job.to_dict(), "report": _report_dict(report)})
+        if (request.query_one("wait") or "").lower() in _TRUTHY:
+            report = self._service.run(job)
+            return Response(
+                200, {"job": job.to_dict(), "report": _report_dict(report)}
+            )
+
+        if self._runner is None:  # pragma: no cover - always wired by build_app
+            report = self._service.run(job)
+            return Response(
+                200, {"job": job.to_dict(), "report": _report_dict(report)}
+            )
+        if job.status != JobStatus.PENDING:
+            raise ConflictError(
+                f"job {job.id!r} must be pending to run, was {job.status.value}"
+            )
+        if not self._runner.start(job.id):
+            raise ConflictError(f"job {job.id!r} is already running")
+        return Response(
+            202,
+            {
+                "job_id": job.id,
+                "status": job.status.value,
+                "accepted": True,
+                "poll": f"/jobs/{job.id}",
+                "output": f"/jobs/{job.id}/output",
+            },
+            {"Location": f"/jobs/{job.id}"},
+        )
 
     # --- Queries ------------------------------------------------------------
 
@@ -95,6 +143,21 @@ class JobController:
             200,
             {"results": [r.to_dict() for r in results], "count": len(results)},
         )
+
+    def output(self, request: Request) -> Response:
+        """The assembled files and run statistics of the job's last run."""
+        job = self._load(request)
+        stored = self._service.output_for(job.id)
+        if stored is None:
+            raise ConflictError(
+                f"job {job.id!r} has no output yet (status={job.status.value})"
+            )
+        body = stored.to_dict()
+        body["running"] = (
+            self._runner.is_running(job.id) if self._runner is not None else False
+        )
+        body["progress"] = job.progress
+        return Response(200, body)
 
     # --- Internals ----------------------------------------------------------
 

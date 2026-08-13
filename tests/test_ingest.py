@@ -12,6 +12,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 
 from api.app import Application, build_app
 from api.http import Request, Response
@@ -27,7 +28,14 @@ def _request(method: str, path: str, body: Any | None = None) -> Request:
     if body is not None:
         raw = json.dumps(body).encode("utf-8")
         headers["Content-Type"] = "application/json"
-    return Request(method=method, path=path, headers=headers, raw_body=raw)
+    parsed = urlsplit(path)
+    return Request(
+        method=method,
+        path=parsed.path,
+        headers=headers,
+        raw_body=raw,
+        query=parse_qs(parsed.query),
+    )
 
 
 def _json(response: Response) -> Any:
@@ -130,7 +138,7 @@ class IngestApiTests(unittest.TestCase):
             job = _json(created)
             self.assertEqual(len(job["source_files"]), 1)
 
-            run = self.app.dispatch(_request("POST", f"/jobs/{job['id']}/run"))
+            run = self.app.dispatch(_request("POST", f"/jobs/{job['id']}/run?wait=1"))
             self.assertEqual(run.status, 200)
             report = _json(run)["report"]
             self.assertTrue(report["succeeded"])

@@ -18,10 +18,11 @@ from core.merger import MergeFn
 from core.orchestrator import Orchestrator, RunReport, TranslateFn
 from core.verifier import RepairFn, VerifyFn
 from db.connection import Database
-from db.repository import JobRepository, ResultRepository
+from db.repository import JobRepository, OutputRepository, ResultRepository
 from models.agent import SwarmAgent
-from models.enums import Language
+from models.enums import JobStatus, Language
 from models.job import TranslationJob
+from models.output import AssembledOutput, JobOutput, RunSummary
 from models.result import TranslationResult
 from models.source import SourceFile
 from services.ingest import ingest_source
@@ -53,6 +54,7 @@ class TranslationService:
         self._settings = settings
         self._jobs = JobRepository(db)
         self._results = ResultRepository(db)
+        self._outputs = OutputRepository(db)
         # The Groq Brain plugs in here; default to the offline stub.
         self._translate_fn: TranslateFn = translate_fn or stub_translate
         # The reconciliation Brain plugs in here; default to the offline stub so
@@ -127,8 +129,11 @@ class TranslationService:
         """Run the full translate pipeline for ``job`` and persist results.
 
         The orchestrator checkpoints job state to the repository as it advances;
-        we additionally persist each per-unit result. Illegal starting states
-        raise ``OrchestrationError`` (mapped to ``409`` by the API).
+        we additionally persist each per-unit result and, once the run lands,
+        the assembled files plus their merge/verify summary — so the outcome
+        survives the process and can be re-read by ``GET /jobs/{id}/output``.
+        Illegal starting states raise ``OrchestrationError`` (mapped to ``409``
+        by the API).
         """
         orchestrator = Orchestrator(
             self._build_agents(),
@@ -146,9 +151,31 @@ class TranslationService:
             result = report.results.get(unit.id)
             if result is not None:
                 self._results.save(result)
+        self._save_output(job, report)
         return report
 
+    def record_failure(self, job: TranslationJob, error: str) -> None:
+        """Persist why a run aborted, so a poller can read the reason back.
+
+        The orchestrator already moved the job to ``FAILED``; this stores the
+        message alongside it (an empty output row) instead of losing it with
+        the thread that raised.
+        """
+        self._outputs.save(
+            RunSummary(
+                job_id=job.id,
+                status=job.status,
+                succeeded=False,
+                verified=False,
+                error=error,
+            )
+        )
+
     # --- Queries ------------------------------------------------------------
+
+    def output_for(self, job_id: str) -> JobOutput | None:
+        """The stored result of the job's last run, or ``None`` if never run."""
+        return self._outputs.get(job_id)
 
     def get_job(self, job_id: str) -> TranslationJob | None:
         return self._jobs.get(job_id)
@@ -175,6 +202,31 @@ class TranslationService:
         return self._build_agents()
 
     # --- Internals ----------------------------------------------------------
+
+    def _save_output(self, job: TranslationJob, report: RunReport) -> None:
+        self._outputs.save(
+            RunSummary(
+                job_id=job.id,
+                status=job.status,
+                succeeded=report.succeeded,
+                total_tokens=report.total_tokens,
+                merges=report.merge_count,
+                merge_tokens=report.merge_tokens,
+                merge_depth=report.merge_depth,
+                verified=report.verified,
+                repairs=report.repairs,
+            ),
+            [
+                AssembledOutput(
+                    source_file_id=f.source_file_id,
+                    source_path=f.source_path,
+                    target_language=f.target_language,
+                    content=f.content,
+                    unit_count=f.unit_count,
+                )
+                for f in report.assembled_files
+            ],
+        )
 
     def _build_agents(self) -> list[SwarmAgent]:
         return [

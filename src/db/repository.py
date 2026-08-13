@@ -2,18 +2,22 @@
 
 ``JobRepository`` persists the whole job aggregate (job + source files + units)
 transactionally, and satisfies the orchestrator's ``JobPersister`` protocol via
-its :meth:`save` method. ``ResultRepository`` stores per-unit translations.
+its :meth:`save` method. ``ResultRepository`` stores per-unit translations, and
+``OutputRepository`` stores what a finished run produced (the assembled files
+plus the merge/verify summary) so output outlives the process that made it.
 """
 
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Sequence
 from datetime import datetime
 
 from core.errors import RepositoryError
 from db.connection import Database
 from models.enums import JobStatus, Language, UnitStatus
 from models.job import TranslationJob
+from models.output import AssembledOutput, JobOutput, RunSummary
 from models.result import TranslationResult
 from models.source import SourceFile, TranslationUnit
 
@@ -257,6 +261,126 @@ class ResultRepository:
             success=bool(row["success"]),
             error=row["error"],
             created_at=_parse_dt(row["created_at"]),
+        )
+
+
+class OutputRepository:
+    """Stores and retrieves what a run produced: files plus a run summary."""
+
+    def __init__(self, db: Database) -> None:
+        self._db = db
+
+    def save(
+        self, summary: RunSummary, files: Sequence[AssembledOutput] = ()
+    ) -> None:
+        """Upsert one job's run summary and its assembled files atomically.
+
+        Re-running a job replaces the previous output rather than accumulating
+        stale files, so ``GET /jobs/{id}/output`` always describes the last run.
+        """
+        try:
+            with self._db.transaction() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO run_reports (job_id, status, succeeded,
+                        total_tokens, merges, merge_tokens, merge_depth,
+                        verified, repairs, error, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(job_id) DO UPDATE SET
+                        status=excluded.status,
+                        succeeded=excluded.succeeded,
+                        total_tokens=excluded.total_tokens,
+                        merges=excluded.merges,
+                        merge_tokens=excluded.merge_tokens,
+                        merge_depth=excluded.merge_depth,
+                        verified=excluded.verified,
+                        repairs=excluded.repairs,
+                        error=excluded.error,
+                        created_at=excluded.created_at
+                    """,
+                    (
+                        summary.job_id,
+                        summary.status.value,
+                        1 if summary.succeeded else 0,
+                        summary.total_tokens,
+                        summary.merges,
+                        summary.merge_tokens,
+                        summary.merge_depth,
+                        1 if summary.verified else 0,
+                        summary.repairs,
+                        summary.error,
+                        summary.created_at.isoformat(),
+                    ),
+                )
+                conn.execute(
+                    "DELETE FROM assembled_files WHERE job_id = ?", (summary.job_id,)
+                )
+                for assembled in files:
+                    conn.execute(
+                        """
+                        INSERT INTO assembled_files (job_id, source_file_id,
+                            source_path, target_language, content, unit_count)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            summary.job_id,
+                            assembled.source_file_id,
+                            assembled.source_path,
+                            assembled.target_language.value,
+                            assembled.content,
+                            assembled.unit_count,
+                        ),
+                    )
+        except sqlite3.Error as exc:
+            raise RepositoryError(
+                f"failed to save output for job {summary.job_id!r}: {exc}"
+            ) from exc
+
+    def get(self, job_id: str) -> JobOutput | None:
+        """The stored output for a job, or ``None`` if it has never run."""
+        try:
+            conn = self._db.connection
+            row = conn.execute(
+                "SELECT * FROM run_reports WHERE job_id = ?", (job_id,)
+            ).fetchone()
+            if row is None:
+                return None
+            file_rows = conn.execute(
+                """
+                SELECT * FROM assembled_files WHERE job_id = ?
+                ORDER BY source_path, source_file_id
+                """,
+                (job_id,),
+            ).fetchall()
+        except sqlite3.Error as exc:
+            raise RepositoryError(
+                f"failed to load output for job {job_id!r}: {exc}"
+            ) from exc
+
+        return JobOutput(
+            summary=RunSummary(
+                job_id=row["job_id"],
+                status=JobStatus(row["status"]),
+                succeeded=bool(row["succeeded"]),
+                total_tokens=row["total_tokens"],
+                merges=row["merges"],
+                merge_tokens=row["merge_tokens"],
+                merge_depth=row["merge_depth"],
+                verified=bool(row["verified"]),
+                repairs=row["repairs"],
+                error=row["error"],
+                created_at=_parse_dt(row["created_at"]),
+            ),
+            files=tuple(
+                AssembledOutput(
+                    source_file_id=r["source_file_id"],
+                    source_path=r["source_path"],
+                    target_language=Language.from_value(r["target_language"]),
+                    content=r["content"],
+                    unit_count=r["unit_count"],
+                )
+                for r in file_rows
+            ),
         )
 
 

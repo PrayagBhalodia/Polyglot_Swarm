@@ -79,6 +79,9 @@ class TranslationJob:
         self.updated_at = _now()
 
     def to_dict(self) -> dict[str, Any]:
+        # The derived counters ride along so a poller watching an asynchronous
+        # run can read progress straight off the job it already fetched. They
+        # are computed, never stored, so ``from_dict`` simply ignores them.
         return {
             "id": self.id,
             "name": self.name,
@@ -87,6 +90,10 @@ class TranslationJob:
             "status": self.status.value,
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
+            "total_units": self.total_units,
+            "completed_units": self.completed_units,
+            "failed_units": self.failed_units,
+            "progress": self.progress,
             "source_files": [f.to_dict() for f in self.source_files],
             "units": [u.to_dict() for u in self.units],
         }

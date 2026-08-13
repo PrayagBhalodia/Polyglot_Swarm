@@ -83,7 +83,8 @@ class ServerSmokeTests(unittest.TestCase):
         conn.close()
 
         conn = self._conn()
-        conn.request("POST", f"/jobs/{created['id']}/run")
+        # ?wait=1 keeps this a deterministic synchronous round trip.
+        conn.request("POST", f"/jobs/{created['id']}/run?wait=1")
         resp = conn.getresponse()
         self.assertEqual(resp.status, 200)
         self.assertTrue(json.loads(resp.read())["report"]["succeeded"])

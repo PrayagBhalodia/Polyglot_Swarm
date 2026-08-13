@@ -28,6 +28,7 @@ def build_router(*, jobs: JobController, agents: AgentController) -> Router:
     router.add("POST", "/jobs/{id}/run", jobs.run)
     router.add("GET", "/jobs/{id}/units", jobs.units)
     router.add("GET", "/jobs/{id}/results", jobs.results)
+    router.add("GET", "/jobs/{id}/output", jobs.output)
 
     router.add("GET", "/agents", agents.list)
 

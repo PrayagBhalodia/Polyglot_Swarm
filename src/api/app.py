@@ -28,6 +28,7 @@ from middleware.json_body import json_body_middleware
 from middleware.logging import logging_middleware
 from routes.router import MethodNotAllowed, Resolved, Router
 from routes.routes import build_router
+from services.job_runner import build_job_runner
 from services.translation_service import TranslationService
 
 
@@ -75,7 +76,13 @@ def build_app(
     verify_fn: VerifyFn | None = None,
     repair_fn: RepairFn | None = None,
 ) -> Application:
-    """Compose the whole API over an initialised :class:`Database`."""
+    """Compose the whole API over an initialised :class:`Database`.
+
+    The request-handling service reads and writes through ``db``; the job
+    runner mirrors the same wiring but gives every background run its own
+    connection, since the HTTP server is single-threaded and a ``sqlite3``
+    connection may not cross threads.
+    """
     service = TranslationService(
         db,
         settings=settings,
@@ -84,7 +91,15 @@ def build_app(
         verify_fn=verify_fn,
         repair_fn=repair_fn,
     )
-    jobs = JobController(service)
+    runner = build_job_runner(
+        db,
+        settings=settings,
+        translate_fn=translate_fn,
+        merge_fn=merge_fn,
+        verify_fn=verify_fn,
+        repair_fn=repair_fn,
+    )
+    jobs = JobController(service, runner)
     agents = AgentController(service)
     router = build_router(jobs=jobs, agents=agents)
     middleware: list[Middleware] = [

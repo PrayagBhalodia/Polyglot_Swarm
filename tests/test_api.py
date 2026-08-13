@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import unittest
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 
 from api.app import Application, build_app
 from api.http import Request, Response
@@ -22,12 +23,20 @@ _COBOL = "".join(f"MOVE {i} TO WS-COUNTER\n" for i in range(6))
 def _request(
     method: str, path: str, body: Any | None = None
 ) -> Request:
+    """Build a request, splitting any ``?query`` exactly as the server does."""
     raw = b""
     headers: dict[str, str] = {}
     if body is not None:
         raw = json.dumps(body).encode("utf-8")
         headers["Content-Type"] = "application/json"
-    return Request(method=method, path=path, headers=headers, raw_body=raw)
+    parsed = urlsplit(path)
+    return Request(
+        method=method,
+        path=parsed.path,
+        headers=headers,
+        raw_body=raw,
+        query=parse_qs(parsed.query),
+    )
 
 
 def _json(response: Response) -> Any:
@@ -191,7 +200,7 @@ class JobLifecycleTests(ApiTestCase):
     def test_run_completes_job_and_assembles_output(self) -> None:
         created = self._create_job()
         response = self.app.dispatch(
-            _request("POST", f"/jobs/{created['id']}/run")
+            _request("POST", f"/jobs/{created['id']}/run?wait=1")
         )
         self.assertEqual(response.status, 200)
         body = _json(response)
@@ -202,7 +211,7 @@ class JobLifecycleTests(ApiTestCase):
 
     def test_units_and_results_after_run(self) -> None:
         created = self._create_job()
-        self.app.dispatch(_request("POST", f"/jobs/{created['id']}/run"))
+        self.app.dispatch(_request("POST", f"/jobs/{created['id']}/run?wait=1"))
 
         units = _json(self.app.dispatch(_request("GET", f"/jobs/{created['id']}/units")))
         self.assertGreater(units["count"], 0)
@@ -215,12 +224,12 @@ class JobLifecycleTests(ApiTestCase):
 
     def test_running_twice_is_409(self) -> None:
         created = self._create_job()
-        self.app.dispatch(_request("POST", f"/jobs/{created['id']}/run"))
-        second = self.app.dispatch(_request("POST", f"/jobs/{created['id']}/run"))
+        self.app.dispatch(_request("POST", f"/jobs/{created['id']}/run?wait=1"))
+        second = self.app.dispatch(_request("POST", f"/jobs/{created['id']}/run?wait=1"))
         self.assertEqual(second.status, 409)
 
     def test_run_missing_job_is_404(self) -> None:
-        response = self.app.dispatch(_request("POST", "/jobs/nope/run"))
+        response = self.app.dispatch(_request("POST", "/jobs/nope/run?wait=1"))
         self.assertEqual(response.status, 404)
 
 

@@ -62,8 +62,10 @@ src/
 │   └── errors.py        Exception hierarchy
 ├── config/       Layered settings (defaults → TOML → env); secrets only in env
 ├── db/           SQLite data-access layer (repositories, never touched above db/)
-│   └── repository.py    JobRepository (also the orchestrator's checkpoint hook)
+│   └── repository.py    JobRepository (also the orchestrator's checkpoint hook),
+│                        ResultRepository, OutputRepository (durable run output)
 ├── services/     Use cases over the core (TranslationService); the translate_fn seam
+│   └── job_runner.py    Background runs, each on its own DB connection
 ├── controllers/  HTTP handlers: parse/validate a request → service call → response
 ├── routes/       The Router (templated path matching) + the route table
 ├── middleware/   JSON body parsing, error→JSON mapping, request logging
@@ -129,9 +131,7 @@ skipped. Both are fallbacks the assembler still serves.)
 The pipeline is exposed as a stdlib-only JSON API (`http.server`, no new deps).
 Both seams default to offline stubs, so the server runs fully working endpoints
 with **no network and no API key**; real Groq clients are injected in their place
-via `build_app(..., translate_fn=..., merge_fn=...)` for production. The
-`POST /jobs/{id}/run` response reports the merge tree it built (`merges`,
-`merge_depth`, `merge_tokens`) alongside the assembled output.
+via `build_app(..., translate_fn=..., merge_fn=...)` for production.
 
 | Method & path | Purpose |
 |---|---|
@@ -140,11 +140,38 @@ via `build_app(..., translate_fn=..., merge_fn=...)` for production. The
 | `POST /jobs` | Create a job (`name`, `source_language`, `target_language`, `source_files[]`) |
 | `POST /jobs/ingest` | Create a job from a `source_kind` (`local`/`github`) + `location` |
 | `GET /jobs` | List job summaries |
-| `GET /jobs/{id}` | Fetch one job (full aggregate) |
-| `POST /jobs/{id}/run` | Run the translate pipeline; returns the job + assembled output |
+| `GET /jobs/{id}` | Fetch one job (full aggregate, including `progress`) |
+| `POST /jobs/{id}/run` | **Start** the pipeline → `202 Accepted`; `?wait=1` runs it inline and returns the full report |
 | `GET /jobs/{id}/units` | The job's translation units |
 | `GET /jobs/{id}/results` | Stored per-unit results |
+| `GET /jobs/{id}/output` | Assembled files + merge/verify statistics of the last run |
 | `GET /agents` | The configured swarm |
+
+### Runs are asynchronous
+
+Translating a real repository takes minutes, so `POST /jobs/{id}/run` no longer
+holds the socket open for the pipeline. It hands the job to a **JobRunner**
+thread and returns `202 Accepted` immediately with a `poll` and an `output`
+link:
+
+```
+POST /jobs/{id}/run            →  202  {"job_id": ..., "poll": "/jobs/{id}", ...}
+GET  /jobs/{id}       (poll)   →  200  {"status": "translating", "progress": 0.62, ...}
+GET  /jobs/{id}/output         →  200  {"succeeded": true, "assembled_files": [...], ...}
+```
+
+`progress` climbs while the run is in flight because the pipeline checkpoints
+job and unit state to SQLite as units land. Output is **persisted** (a
+`run_reports` row plus one `assembled_files` row per file), so it survives the
+process that produced it — and a failed run stores its error there too.
+
+Append `?wait=1` to run the pipeline synchronously and get the whole report back
+in the response; that is the deterministic path the end-to-end tests use.
+
+> The HTTP server is deliberately **single-threaded** (`http.server.HTTPServer`),
+> and a `sqlite3` connection may not cross threads — so every background run
+> opens its **own** connection via `Database.sibling()` and closes it when the
+> thread ends. Nothing is shared between the request thread and a runner.
 
 Errors return a consistent body — `{"error": {"status": 404, "message": "..."}}` —
 with domain failures mapped to HTTP status (illegal lifecycle → `409`,
