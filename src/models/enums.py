@@ -135,6 +135,7 @@ class JobStatus(str, Enum):
     DISPATCHED = "dispatched"  # units assigned to agents
     TRANSLATING = "translating"  # agents are working
     MERGING = "merging"        # agents reconcile adjacent chapters pairwise
+    RECONCILING = "reconciling"  # agents align the merged files with each other
     VERIFYING = "verifying"    # merged output is checked (and repaired if needed)
     ASSEMBLING = "assembling"  # taping merged chapters back together
     COMPLETED = "completed"    # terminal success

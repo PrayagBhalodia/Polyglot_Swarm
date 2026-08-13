@@ -28,8 +28,12 @@ from models.enums import Language  # noqa: E402
 from models.job import TranslationJob  # noqa: E402
 from models.result import TranslationResult  # noqa: E402
 from models.source import SourceFile, TranslationUnit  # noqa: E402
-from services.stub_contract import stub_extract_contract  # noqa: E402
+from services.stub_contract import (  # noqa: E402
+    scan_declarations,
+    stub_extract_contract,
+)
 from services.stub_merger import stub_merge  # noqa: E402
+from services.stub_reconciler import stub_reconcile  # noqa: E402
 from services.verification import default_verify  # noqa: E402
 
 LEGACY_COBOL = """       IDENTIFICATION DIVISION.
@@ -96,6 +100,8 @@ def main() -> int:
         merge_fn=stub_merge,
         verify_fn=default_verify,
         extract_contract_fn=stub_extract_contract,
+        reconcile_fn=stub_reconcile,
+        surface_scanner=scan_declarations,
         max_concurrency=settings.max_concurrency,
         chunker=Chunker(
             max_lines_per_unit=4, strategy=settings.chunk_strategy
@@ -113,6 +119,8 @@ def main() -> int:
           f"before any chapter was translated")
     print(f"Units: {job.total_units}  |  progress: {job.progress:.0%}  |  "
           f"tokens: {report.total_tokens}")
+    print(f"Cross-file pass: {report.reconciled_files} file(s) realigned "
+          f"({report.reconcile_failures} failure(s))")
     print(f"Merge tree: {report.merge_count} reconciliation(s), "
           f"depth {report.merge_depth}, merge tokens {report.merge_tokens}")
     print(f"Verification: {'passed' if report.verified else 'FAILED'} "

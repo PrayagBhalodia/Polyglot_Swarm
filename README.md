@@ -37,6 +37,10 @@ neighbouring chapters *pairwise*, folding them up a binary tree until one
 coherent file remains. Think of an editor passing over each seam between two
 translated chapters, then over the seams between those, and so on.
 
+**Finally**, once every file exists, each one is shown what its siblings
+actually declare and gets one pass to agree with them — because a contract is a
+promise made before the work, and promises get broken.
+
 ## Design in one breath
 
 The whole system is built around a few symmetric seams:
@@ -45,6 +49,8 @@ The whole system is built around a few symmetric seams:
   symbol table before any translation starts.
 - `translate_fn(unit, agent) -> TranslationResult` — translate one chapter.
 - `merge_fn(task, agent) -> MergeResult` — reconcile two adjacent chapters.
+- `reconcile_fn(task, agent) -> ReconcileResult` — align one finished file with
+  the rest of the codebase.
 - `verify_fn(content, language) -> (ok, errors)` — does the merged file parse?
 - `repair_fn(request, agent) -> fixed_content` — fix a file the gate rejected.
 
@@ -70,11 +76,13 @@ src/
 │   ├── result.py     TranslationResult  (the translate_fn boundary)
 │   ├── merge.py      MergeTask, MergeResult  (the merge_fn boundary)
 │   ├── contract.py   Contract, ContractSymbol  (the shared symbol table)
+│   ├── reconcile.py  ReconcileTask, FileSurface  (the reconcile_fn boundary)
 │   └── output.py     RunSummary, AssembledOutput  (durable run results)
 ├── core/         Coordination logic
 │   ├── chunker.py       Cut source files into units (structure-aware scissors)
 │   ├── orchestrator.py  Lifecycle state machine, contract pass, concurrency
 │   ├── merger.py        Reconcile adjacent chapters pairwise (the merge tree)
+│   ├── reconciler.py    Align the finished files with each other (cross-file)
 │   ├── verifier.py      Gate merged output on parse-soundness, repair in a loop
 │   ├── assembler.py     Reassemble chapters in order (naive-join fallback)
 │   └── errors.py        Exception hierarchy
@@ -110,6 +118,9 @@ legacy files ──chunk──▶ units ─────────────�
                                         │    (pairwise, recursive up a tree;
                                         │     the contract rides along)
                                         ▼
+                                  reconcile_fn  (each file vs. all the others)
+                                        │
+                                        ▼
                              verify_fn ──ok?──▶ assemble ──▶ target files
                                  ▲   │
                                  └───┘ repair_fn (fix + re-check, bounded)
@@ -124,6 +135,23 @@ file at a time. So the contract-first pass fixes the vocabulary *before* any
 chapter is translated, and every translate and merge prompt carries it (own-file
 symbols first, then the rest of the codebase). `POLYGLOT_CONTRACT=off` restores
 the naive, contract-free path.
+
+**Cross-file reconciliation** closes the loop the contract opens. A contract is
+a promise made *before* the work; the reconciliation pass checks what was
+actually delivered. Once every file has been merged, each one is handed the
+**surface** of all the others — the symbols they genuinely declare, scanned out
+of the emitted code, not out of the plan — plus the contract, and gets one pass
+to agree with them. It runs *before* the verification gate, so anything it edits
+still has to parse.
+
+It is deliberately unlike a merge in two ways. It is **per file, not pairwise**:
+reconciling A against B must yield two files, and a merge yields one, so folding
+files up the merge tree would tape a whole codebase into a single blob. And it
+is **advisory**: a file whose pass fails keeps exactly the content the merge tree
+produced, because unpolished output is still correct output and failing a job
+over a cosmetic rename would be the worse outcome. Single-file jobs skip the
+phase entirely — there is nothing to be inconsistent with.
+`POLYGLOT_RECONCILE=off` disables it.
 
 The merge tree is order-preserving and log-depth: `n` chapters take
 `ceil(log2(n))` levels, and every pair at a level can be reconciled by a
@@ -169,13 +197,15 @@ A job advances through a **validated lifecycle** — illegal transitions raise
 rather than silently corrupting state:
 
 ```
-PENDING → CHUNKING → ANALYZING → DISPATCHED → TRANSLATING → MERGING → VERIFYING → ASSEMBLING → COMPLETED
-                                                                        ↘ FAILED (from any active state)
+PENDING → CHUNKING → ANALYZING → DISPATCHED → TRANSLATING → MERGING
+        → RECONCILING → VERIFYING → ASSEMBLING → COMPLETED
+                     ↘ FAILED (from any active state)
 ```
 
 (Each optional seam removes its own stage: without a contract seam `CHUNKING`
 goes straight to `DISPATCHED`; without a merge seam `TRANSLATING` goes straight
-to `ASSEMBLING` and chapters are joined naively; with merge on but no verify
+to `ASSEMBLING` and chapters are joined naively; `RECONCILING` is skipped when
+the pass is off or the job has a single file; with merge on but no verify
 seam, `VERIFYING` is skipped. All of them are fallbacks the assembler still
 serves. Any escaping exception — domain error or a seam raising something
 unexpected — leaves the job `FAILED` and checkpointed, so a background run can
@@ -277,6 +307,7 @@ Precedence, lowest to highest: `src/config/default.toml` → an optional user TO
 | Chunk strategy | `POLYGLOT_CHUNK_STRATEGY` | `structural` (or `lines`) |
 | Verification gate | `POLYGLOT_VERIFY` | `toolchain` (or `basic`) |
 | Contract-first pass | `POLYGLOT_CONTRACT` | `on` (or `off`) |
+| Cross-file reconciliation | `POLYGLOT_RECONCILE` | `on` (or `off`) |
 | Ingest allow-list root | `POLYGLOT_INGEST_ROOT` | *(unset ⇒ no restriction)* |
 | Max files / ingest | `POLYGLOT_MAX_FILES` | `500` |
 | Max bytes / file | `POLYGLOT_MAX_FILE_BYTES` | `1000000` |

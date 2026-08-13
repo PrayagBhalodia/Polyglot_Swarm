@@ -64,6 +64,7 @@ CREATE TABLE IF NOT EXISTS run_reports (
     verified      INTEGER NOT NULL DEFAULT 1,
     repairs       INTEGER NOT NULL DEFAULT 0,
     contract_symbols INTEGER NOT NULL DEFAULT 0,
+    reconciled_files INTEGER NOT NULL DEFAULT 0,
     error         TEXT,
     created_at    TEXT NOT NULL
 );

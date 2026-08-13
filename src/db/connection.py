@@ -28,6 +28,15 @@ _SCHEMA_PATH = Path(__file__).with_name("schema.sql")
 # gives up; a background run and a polling reader routinely overlap.
 _BUSY_TIMEOUT_MS = 5000
 
+# Columns added to a table after it first shipped, as
+# ``(table, column, full definition)``. Applied by :meth:`Database._migrate` to
+# databases created before the column existed. Every entry must be additive and
+# must carry a default, so replaying the list is always a no-op.
+_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
+    ("run_reports", "contract_symbols", "contract_symbols INTEGER NOT NULL DEFAULT 0"),
+    ("run_reports", "reconciled_files", "reconciled_files INTEGER NOT NULL DEFAULT 0"),
+)
+
 
 class Database:
     """Owns a single SQLite connection and applies the schema.
@@ -82,9 +91,34 @@ class Database:
         try:
             sql = _SCHEMA_PATH.read_text(encoding="utf-8")
             self._conn.executescript(sql)
+            self._migrate()
             self._conn.commit()
         except (sqlite3.Error, OSError) as exc:
             raise RepositoryError(f"failed to apply schema: {exc}") from exc
+
+    def _migrate(self) -> None:
+        """Add columns a database created by an older schema is missing.
+
+        ``CREATE TABLE IF NOT EXISTS`` silently leaves an existing table alone,
+        so a table that gained a column since it was first created would keep
+        the old shape and fail every insert. Each entry below is additive and
+        carries a default, which is what makes replaying this safe.
+        """
+        for table, column, definition in _ADDED_COLUMNS:
+            if not self._has_table(table) or self._has_column(table, column):
+                continue
+            self._conn.execute(f"ALTER TABLE {table} ADD COLUMN {definition}")
+
+    def _has_table(self, table: str) -> bool:
+        row = self._conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+            (table,),
+        ).fetchone()
+        return row is not None
+
+    def _has_column(self, table: str, column: str) -> bool:
+        rows = self._conn.execute(f"PRAGMA table_info({table})").fetchall()
+        return any(r["name"] == column for r in rows)
 
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:

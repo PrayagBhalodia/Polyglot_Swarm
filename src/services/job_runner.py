@@ -28,6 +28,7 @@ from config.settings import Settings
 from core.errors import PolyglotSwarmError
 from core.merger import MergeFn
 from core.orchestrator import ExtractContractFn, TranslateFn
+from core.reconciler import ReconcileFn
 from core.verifier import RepairFn, VerifyFn
 from db.connection import Database
 from services.translation_service import TranslationService
@@ -138,6 +139,7 @@ def build_job_runner(
     verify_fn: VerifyFn | None = None,
     repair_fn: RepairFn | None = None,
     extract_contract_fn: ExtractContractFn | None = None,
+    reconcile_fn: ReconcileFn | None = None,
 ) -> JobRunner:
     """A :class:`JobRunner` whose workers mirror ``db``'s wiring on their own
     connection."""
@@ -152,6 +154,7 @@ def build_job_runner(
             verify_fn=verify_fn,
             repair_fn=repair_fn,
             extract_contract_fn=extract_contract_fn,
+            reconcile_fn=reconcile_fn,
         )
 
     return JobRunner(factory)

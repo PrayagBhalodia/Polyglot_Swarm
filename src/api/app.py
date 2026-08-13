@@ -17,6 +17,7 @@ from controllers.agent_controller import AgentController
 from controllers.job_controller import JobController
 from core.merger import MergeFn
 from core.orchestrator import ExtractContractFn, TranslateFn
+from core.reconciler import ReconcileFn
 from core.verifier import RepairFn, VerifyFn
 from db.connection import Database
 from middleware.errors import (
@@ -76,6 +77,7 @@ def build_app(
     verify_fn: VerifyFn | None = None,
     repair_fn: RepairFn | None = None,
     extract_contract_fn: ExtractContractFn | None = None,
+    reconcile_fn: ReconcileFn | None = None,
 ) -> Application:
     """Compose the whole API over an initialised :class:`Database`.
 
@@ -92,6 +94,7 @@ def build_app(
         verify_fn=verify_fn,
         repair_fn=repair_fn,
         extract_contract_fn=extract_contract_fn,
+        reconcile_fn=reconcile_fn,
     )
     runner = build_job_runner(
         db,
@@ -101,6 +104,7 @@ def build_app(
         verify_fn=verify_fn,
         repair_fn=repair_fn,
         extract_contract_fn=extract_contract_fn,
+        reconcile_fn=reconcile_fn,
     )
     jobs = JobController(service, runner)
     agents = AgentController(service)

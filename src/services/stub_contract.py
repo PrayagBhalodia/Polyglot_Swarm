@@ -126,13 +126,23 @@ def stub_extract_contract(
 # --- Finding symbols --------------------------------------------------------
 
 
-def _scan(source_file: SourceFile, language: Language) -> list[tuple[str, str]]:
-    """``(kind, name)`` for every top-level declaration in one file."""
+def scan_declarations(content: str, language: Language) -> list[tuple[str, str]]:
+    """``(kind, name)`` for every top-level declaration in ``content``.
+
+    Public because the cross-file reconciliation pass needs the same reading of
+    a file — there, applied to the *translated* output, to see which symbols
+    each file actually ended up defining.
+    """
     if language == Language.PYTHON:
-        parsed = _scan_python(source_file.content)
+        parsed = _scan_python(content)
         if parsed is not None:
             return parsed  # a real parse beats any regex
-    return _scan_lines(source_file.content)
+    return _scan_lines(content)
+
+
+def _scan(source_file: SourceFile, language: Language) -> list[tuple[str, str]]:
+    """``(kind, name)`` for every top-level declaration in one file."""
+    return scan_declarations(source_file.content, language)
 
 
 def _scan_python(content: str) -> list[tuple[str, str]] | None:

@@ -23,6 +23,15 @@ class MergeError(PolyglotSwarmError):
     """Raised when two translated chapters cannot be reconciled into one."""
 
 
+class ReconcileError(PolyglotSwarmError):
+    """Raised when the cross-file reconciliation pass cannot be run at all.
+
+    Note that a *failed reconciliation of one file* is not an error: it is
+    reported and the merged content is kept. This is for the pass itself being
+    misconfigured (no agents, bad concurrency).
+    """
+
+
 class VerificationError(PolyglotSwarmError):
     """Raised when merged output fails to verify (and cannot be repaired)."""
 

@@ -59,6 +59,8 @@ class RunSummary:
     repairs: int = 0
     # Size of the shared contract the chapters were translated against.
     contract_symbols: int = 0
+    # Files the closing cross-file pass actually changed.
+    reconciled_files: int = 0
     error: str | None = None
     created_at: datetime = field(default_factory=_now)
 
@@ -74,6 +76,7 @@ class RunSummary:
             "verified": self.verified,
             "repairs": self.repairs,
             "contract_symbols": self.contract_symbols,
+            "reconciled_files": self.reconciled_files,
             "error": self.error,
             "created_at": self.created_at.isoformat(),
         }

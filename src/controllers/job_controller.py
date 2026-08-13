@@ -257,6 +257,9 @@ def _report_dict(report: RunReport) -> dict[str, Any]:
         "verified": report.verified,
         "repairs": report.repairs,
         "contract_symbols": report.contract_symbols,
+        "reconciled_files": report.reconciled_files,
+        "reconcile_tokens": report.reconcile_tokens,
+        "reconcile_failures": report.reconcile_failures,
         "assembled_files": [
             {
                 "source_path": f.source_path,

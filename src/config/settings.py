@@ -71,6 +71,9 @@ class Settings:
     # Run the contract-first pass before translating. Off falls back to the
     # naive path, where every chapter is translated in isolation.
     contract_enabled: bool = True
+    # Run the closing cross-file pass that aligns the merged files with each
+    # other. Skipped automatically for single-file jobs.
+    reconcile_enabled: bool = True
     # Optional allow-list root for local-folder ingestion. When set, a job may
     # only be created from a path inside it; unset preserves "anywhere the
     # process can read", which is fine for a local single-user run.
@@ -218,6 +221,12 @@ def load_settings(user_config: str | Path | None = None) -> Settings:
         if contract_raw is not None
         else bool(contract.get("enabled", True))
     )
+    reconcile_raw = _env_str("POLYGLOT_RECONCILE")
+    reconcile_enabled = (
+        _as_bool("POLYGLOT_RECONCILE", reconcile_raw)
+        if reconcile_raw is not None
+        else bool(contract.get("reconcile", True))
+    )
     verify_raw = _env_str("POLYGLOT_VERIFY") or str(
         verification.get("mode", "toolchain")
     )
@@ -249,6 +258,7 @@ def load_settings(user_config: str | Path | None = None) -> Settings:
         chunk_strategy=chunk_strategy,
         verify_mode=verify_mode,
         contract_enabled=contract_enabled,
+        reconcile_enabled=reconcile_enabled,
         ingest_root=str(ingest_root) if ingest_root else None,
         max_files=max_files,
         max_file_bytes=max_file_bytes,

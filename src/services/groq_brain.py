@@ -17,15 +17,18 @@ import json
 import logging
 import time
 from collections.abc import Sequence
+from typing import NamedTuple
 
 from config.settings import Settings
 from core.merger import MergeFn
 from core.orchestrator import ExtractContractFn, TranslateFn
+from core.reconciler import ReconcileFn
 from core.verifier import RepairFn
 from models.agent import SwarmAgent
 from models.contract import Contract, ContractSymbol
 from models.enums import Language
 from models.merge import MergeResult, MergeTask
+from models.reconcile import ReconcileResult, ReconcileTask
 from models.result import TranslationResult
 from models.source import SourceFile, TranslationUnit
 from models.verification import RepairRequest
@@ -158,6 +161,58 @@ def build_repair_fn(client: CompletionClient) -> RepairFn:
     return repair
 
 
+def build_reconcile_fn(client: CompletionClient) -> ReconcileFn:
+    """A ``reconcile_fn`` that aligns one finished file with the rest via Groq.
+
+    The prompt is deliberately narrow: this pass runs on code that already
+    merged cleanly, so its licence is to fix cross-file disagreement and
+    nothing else. A failure hands the unchanged file back — the merged content
+    is still correct, and the verification gate runs after this either way.
+    """
+
+    def reconcile(task: ReconcileTask, agent: SwarmAgent) -> ReconcileResult:
+        target = task.target_language.value
+        system = (
+            f"You are aligning one file of a freshly translated {target} "
+            f"codebase with its siblings. Fix ONLY cross-file inconsistencies: "
+            f"names that disagree with the agreed contract, calls to symbols "
+            f"another file defines under a different name, imports of things "
+            f"that do not exist, and helpers duplicated from another file. "
+            f"Preserve behaviour and structure, and if the file is already "
+            f"consistent return it byte-for-byte unchanged. Output only the "
+            f"{target} code — no prose, no markdown fences."
+        )
+        user = f"File: {task.source_path}\n\n{task.render_context()}\n\nCode:\n{task.content}"
+        start = time.perf_counter()
+        try:
+            completion = client.complete(
+                system=system, user=user, model=agent.model
+            )
+        except Exception as exc:  # noqa: BLE001 - advisory pass, never fatal
+            _logger.warning(
+                "reconciliation of %s failed (%s); keeping the merged file",
+                task.source_path,
+                exc,
+            )
+            return ReconcileResult.failure(
+                task.source_file_id,
+                task.target_language,
+                task.content,
+                f"groq reconcile: {exc}",
+                agent_id=agent.id,
+            )
+        return ReconcileResult(
+            source_file_id=task.source_file_id,
+            target_language=task.target_language,
+            content=_strip_code_fences(completion.text),
+            agent_id=agent.id,
+            tokens_used=completion.tokens,
+            duration_ms=_elapsed_ms(start),
+        )
+
+    return reconcile
+
+
 def build_extract_contract_fn(client: CompletionClient) -> ExtractContractFn:
     """An ``extract_contract_fn`` that agrees the shared symbol table via Groq.
 
@@ -206,27 +261,34 @@ def build_extract_contract_fn(client: CompletionClient) -> ExtractContractFn:
     return extract
 
 
+class GroqSeams(NamedTuple):
+    """Every seam the Brain track supplies, in one bundle."""
+
+    translate_fn: TranslateFn | None = None
+    merge_fn: MergeFn | None = None
+    repair_fn: RepairFn | None = None
+    extract_contract_fn: ExtractContractFn | None = None
+    reconcile_fn: ReconcileFn | None = None
+
+
 def make_groq_seams(
     settings: Settings, *, client: CompletionClient | None = None
-) -> tuple[TranslateFn, MergeFn, RepairFn, ExtractContractFn]:
+) -> GroqSeams:
     """Build every Groq-backed seam from settings (or an injected client)."""
     client = client or GroqClient(settings.groq)
-    return (
-        build_translate_fn(client),
-        build_merge_fn(client),
-        build_repair_fn(client),
-        build_extract_contract_fn(client),
+    return GroqSeams(
+        translate_fn=build_translate_fn(client),
+        merge_fn=build_merge_fn(client),
+        repair_fn=build_repair_fn(client),
+        extract_contract_fn=build_extract_contract_fn(client),
+        reconcile_fn=build_reconcile_fn(client),
     )
 
 
-def maybe_groq_seams(
-    settings: Settings,
-) -> tuple[
-    TranslateFn | None, MergeFn | None, RepairFn | None, ExtractContractFn | None
-]:
-    """Groq seams when an API key is configured, else ``None`` (offline stubs)."""
+def maybe_groq_seams(settings: Settings) -> GroqSeams:
+    """Groq seams when an API key is configured, else all ``None`` (offline stubs)."""
     if not settings.groq.api_key:
-        return None, None, None, None
+        return GroqSeams()
     return make_groq_seams(settings)
 
 

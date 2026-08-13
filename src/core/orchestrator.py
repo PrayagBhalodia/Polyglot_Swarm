@@ -35,11 +35,13 @@ from core.assembler import AssembledFile, assemble_job
 from core.chunker import Chunker
 from core.errors import OrchestrationError, VerificationError
 from core.merger import MergedFile, MergeFn, Merger, assemble_merged
+from core.reconciler import ReconcileFn, Reconciler, SurfaceScanner
 from core.verifier import RepairFn, Verifier, VerifyFn
 from models.agent import AgentAssignment, SwarmAgent
 from models.contract import Contract
 from models.enums import AgentStatus, JobStatus, Language, UnitStatus
 from models.job import TranslationJob
+from models.reconcile import ReconcileResult
 from models.result import TranslationResult
 from models.source import SourceFile, TranslationUnit
 from models.verification import VerificationResult
@@ -85,8 +87,17 @@ _LEGAL_TRANSITIONS: dict[JobStatus, frozenset[JobStatus]] = {
     JobStatus.TRANSLATING: frozenset(
         {JobStatus.MERGING, JobStatus.ASSEMBLING, JobStatus.FAILED}
     ),
-    # MERGING may go straight to ASSEMBLING or through the VERIFYING gate first.
+    # MERGING may align the files with each other first (RECONCILING), go
+    # straight to the VERIFYING gate, or straight to assembly.
     JobStatus.MERGING: frozenset(
+        {
+            JobStatus.RECONCILING,
+            JobStatus.VERIFYING,
+            JobStatus.ASSEMBLING,
+            JobStatus.FAILED,
+        }
+    ),
+    JobStatus.RECONCILING: frozenset(
         {JobStatus.VERIFYING, JobStatus.ASSEMBLING, JobStatus.FAILED}
     ),
     JobStatus.VERIFYING: frozenset({JobStatus.ASSEMBLING, JobStatus.FAILED}),
@@ -105,6 +116,7 @@ class RunReport:
     assembled_files: list[AssembledFile] = field(default_factory=list)
     assignments: list[AgentAssignment] = field(default_factory=list)
     merged_files: list[MergedFile] = field(default_factory=list)
+    reconciliations: list[ReconcileResult] = field(default_factory=list)
     verifications: list[VerificationResult] = field(default_factory=list)
     contract: Contract | None = None
 
@@ -146,6 +158,20 @@ class RunReport:
         """Size of the shared contract every chapter was translated against."""
         return len(self.contract) if self.contract is not None else 0
 
+    @property
+    def reconciled_files(self) -> int:
+        """Files the cross-file pass actually changed (0 when it found nothing)."""
+        return sum(1 for r in self.reconciliations if r.changed)
+
+    @property
+    def reconcile_tokens(self) -> int:
+        return sum(r.tokens_used for r in self.reconciliations)
+
+    @property
+    def reconcile_failures(self) -> int:
+        """Files whose cross-file pass failed; their merged content was kept."""
+        return sum(1 for r in self.reconciliations if not r.success)
+
 
 class Orchestrator:
     """Coordinates a swarm of agents over a single :class:`TranslationJob`."""
@@ -159,6 +185,8 @@ class Orchestrator:
         verify_fn: VerifyFn | None = None,
         repair_fn: RepairFn | None = None,
         extract_contract_fn: ExtractContractFn | None = None,
+        reconcile_fn: ReconcileFn | None = None,
+        surface_scanner: SurfaceScanner | None = None,
         max_repair_attempts: int = 1,
         max_concurrency: int | None = None,
         chunker: Chunker | None = None,
@@ -182,6 +210,11 @@ class Orchestrator:
         # The contract-first pass. Absent => the naive path, where every chapter
         # is translated in isolation and cross-file names are left to luck.
         self._extract_contract_fn = extract_contract_fn
+        # The closing cross-file pass over the merged files. Needs a scanner to
+        # read each file's emitted surface; without one there is nothing to
+        # show the agents, so the phase is skipped.
+        self._reconcile_fn = reconcile_fn
+        self._surface_scanner = surface_scanner
         self._max_repair_attempts = max_repair_attempts
         self._chunker = chunker or Chunker()
         self._persister = persister
@@ -260,6 +293,7 @@ class Orchestrator:
             self._dispatch(job, report)
             self._translate(job, report)
             self._merge(job, report)
+            self._reconcile(job, report)
             self._verify(job, report)
             self._assemble(job, report)
         except Exception:
@@ -372,6 +406,35 @@ class Orchestrator:
         report.merged_files = merger.merge_job(
             job, report.results, contract=report.contract
         )
+        self._checkpoint(job)
+
+    def _reconcile(self, job: TranslationJob, report: RunReport) -> None:
+        """Align the merged files with each other (skipped without the seam).
+
+        Runs *before* the verification gate on purpose: this phase edits the
+        files, so whatever it produces still has to parse before it can be
+        assembled. It is advisory — a file whose pass fails keeps its merged
+        content — so nothing here can fail the job.
+        """
+        if (
+            self._merge_fn is None
+            or self._reconcile_fn is None
+            or self._surface_scanner is None
+            or len(report.merged_files) < 2
+        ):
+            return
+        self._transition(job, JobStatus.RECONCILING)
+        reconciler = Reconciler(
+            self._reconcile_fn,
+            self._agents,
+            scanner=self._surface_scanner,
+            max_concurrency=self._max_concurrency,
+        )
+        files, results = reconciler.reconcile(
+            job, report.merged_files, contract=report.contract
+        )
+        report.merged_files = files
+        report.reconciliations = results
         self._checkpoint(job)
 
     def _verify(self, job: TranslationJob, report: RunReport) -> None:

@@ -40,6 +40,10 @@ max_file_bytes = 1000000
 # symbol so independently-translated chapters cannot diverge on them. Turning
 # this off falls back to translating each chapter in isolation.
 enabled = true
+# Run the closing cross-file pass: after merging, show each translated file the
+# symbols its siblings actually declare and let an agent align it with them.
+# Automatically skipped for single-file jobs (nothing to be inconsistent with).
+reconcile = true
 
 [verification]
 # "toolchain" runs a real syntax checker per target language when one is

@@ -159,8 +159,8 @@ const EXTENSIONS = {
 // one, so it spans a range that the job's own unit progress fills in.
 const STAGES = [
   ["pending", 2], ["chunking", 6], ["analyzing", 12], ["dispatched", 16],
-  ["translating", 20], ["merging", 72], ["verifying", 84],
-  ["assembling", 94], ["completed", 100],
+  ["translating", 20], ["merging", 70], ["reconciling", 80],
+  ["verifying", 88], ["assembling", 95], ["completed", 100],
 ];
 const AT = Object.fromEntries(STAGES);
 const POLL_MS = 600;
@@ -279,6 +279,7 @@ function render(output) {
     pill("status", output.status),
     pill("files", output.file_count),
     pill("contract symbols", output.contract_symbols ?? 0),
+    pill("files realigned", output.reconciled_files ?? 0),
     pill("merges", output.merges),
     pill("depth", output.merge_depth),
     pill(output.verified ? "verified" : "unverified",

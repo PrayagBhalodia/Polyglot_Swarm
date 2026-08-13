@@ -21,6 +21,7 @@ from core.orchestrator import (
     RunReport,
     TranslateFn,
 )
+from core.reconciler import ReconcileFn
 from core.verifier import RepairFn, VerifyFn
 from db.connection import Database
 from db.repository import JobRepository, OutputRepository, ResultRepository
@@ -32,8 +33,9 @@ from models.result import TranslationResult
 from models.source import SourceFile
 from services.ingest import IngestPolicy, ingest_source
 from services.stub_brain import stub_translate
-from services.stub_contract import stub_extract_contract
+from services.stub_contract import scan_declarations, stub_extract_contract
 from services.stub_merger import stub_merge
+from services.stub_reconciler import stub_reconcile
 from services.verification import default_verify
 
 
@@ -57,6 +59,7 @@ class TranslationService:
         verify_fn: VerifyFn | None = None,
         repair_fn: RepairFn | None = None,
         extract_contract_fn: ExtractContractFn | None = None,
+        reconcile_fn: ReconcileFn | None = None,
     ) -> None:
         self._settings = settings
         self._jobs = JobRepository(db)
@@ -78,6 +81,10 @@ class TranslationService:
             (extract_contract_fn or stub_extract_contract)
             if settings.contract_enabled
             else None
+        )
+        # The closing cross-file pass, gated the same way.
+        self._reconcile_fn: ReconcileFn | None = (
+            (reconcile_fn or stub_reconcile) if settings.reconcile_enabled else None
         )
 
     # --- Commands -----------------------------------------------------------
@@ -161,6 +168,8 @@ class TranslationService:
             verify_fn=self._verify_fn,
             repair_fn=self._repair_fn,
             extract_contract_fn=self._extract_contract_fn,
+            reconcile_fn=self._reconcile_fn,
+            surface_scanner=scan_declarations,
             max_repair_attempts=self._settings.max_repair_attempts,
             max_concurrency=self._settings.max_concurrency,
             chunker=self._build_chunker(),
@@ -236,6 +245,7 @@ class TranslationService:
                 verified=report.verified,
                 repairs=report.repairs,
                 contract_symbols=report.contract_symbols,
+                reconciled_files=report.reconciled_files,
             ),
             [
                 AssembledOutput(

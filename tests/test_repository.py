@@ -113,5 +113,55 @@ class ResultRepositoryTests(unittest.TestCase):
         self.assertEqual(loaded.error, "timeout")
 
 
+class SchemaMigrationTests(unittest.TestCase):
+    """``CREATE TABLE IF NOT EXISTS`` leaves an older table alone, so columns
+    added later have to be back-filled explicitly."""
+
+    def test_missing_columns_are_added_to_an_existing_table(self) -> None:
+        with Database(":memory:") as db:
+            # A run_reports table from before the coherence columns existed.
+            db.connection.execute(
+                """
+                CREATE TABLE run_reports (
+                    job_id TEXT PRIMARY KEY,
+                    status TEXT NOT NULL,
+                    succeeded INTEGER NOT NULL DEFAULT 0,
+                    total_tokens INTEGER NOT NULL DEFAULT 0,
+                    merges INTEGER NOT NULL DEFAULT 0,
+                    merge_tokens INTEGER NOT NULL DEFAULT 0,
+                    merge_depth INTEGER NOT NULL DEFAULT 0,
+                    verified INTEGER NOT NULL DEFAULT 1,
+                    repairs INTEGER NOT NULL DEFAULT 0,
+                    error TEXT,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            db.connection.commit()
+
+            db.init_schema()
+
+            columns = {
+                row["name"]
+                for row in db.connection.execute(
+                    "PRAGMA table_info(run_reports)"
+                ).fetchall()
+            }
+        self.assertIn("contract_symbols", columns)
+        self.assertIn("reconciled_files", columns)
+
+    def test_applying_the_schema_twice_is_a_no_op(self) -> None:
+        with Database(":memory:") as db:
+            db.init_schema()
+            db.init_schema()  # must not fail on already-present columns
+            columns = {
+                row["name"]
+                for row in db.connection.execute(
+                    "PRAGMA table_info(run_reports)"
+                ).fetchall()
+            }
+        self.assertIn("reconciled_files", columns)
+
+
 if __name__ == "__main__":
     unittest.main()
